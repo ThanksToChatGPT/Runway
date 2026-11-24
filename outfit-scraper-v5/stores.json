@@ -1,6 +1,6 @@
 {
   "settings": {
-    "user_agent": "OutfitFinderBot/1.0 (university project; contact: YOUR_EMAIL@unal.edu.co)",
+    "user_agent": "OutfitFinderBot/1.0 (university project)",
     "delay_seconds": 2.0,
     "respect_robots": true,
     "retries": 3,
