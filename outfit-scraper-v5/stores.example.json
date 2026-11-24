@@ -1,0 +1,41 @@
+{
+  "settings": {
+    "user_agent": "OutfitFinderBot/1.0 (university project UNAL; contact: YOUR_EMAIL@unal.edu.co)",
+    "delay_seconds": 2.0,
+    "respect_robots": true,
+    "retries": 3,
+    "max_failures": 5,
+    "max_products_per_store": 1000
+  },
+  "stores": [
+    {
+      "id": "example-shopify",
+      "name": "Example Shopify Store",
+      "base_url": "https://REPLACE-WITH-STORE-DOMAIN",
+      "platform": "shopify",
+      "config": {"max_pages": 10},
+      "is_active": false
+    },
+    {
+      "id": "example-vtex",
+      "name": "Example VTEX Store",
+      "base_url": "https://REPLACE-WITH-STORE-DOMAIN",
+      "platform": "vtex",
+      "config": {"params": {}},
+      "is_active": false
+    },
+    {
+      "id": "example-html",
+      "name": "Example HTML Store",
+      "base_url": "https://REPLACE-WITH-STORE-DOMAIN",
+      "platform": "html",
+      "config": {
+        "list_urls": [{"url": "https://REPLACE-WITH-STORE-DOMAIN/hombre/camisetas?page={page}", "category": "camiseta"}],
+        "max_pages": 5,
+        "selectors": {"item": ".product-card", "name": ".product-title", "price": ".price",
+                      "link": "a@href", "image": "img@src", "brand": ".brand"}
+      },
+      "is_active": false
+    }
+  ]
+}
