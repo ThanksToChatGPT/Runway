@@ -1,0 +1,63 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: outfit_builder_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-outfit_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-outfit_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-outfit_builder}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-outfit_user} -d ${POSTGRES_DB:-outfit_builder}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  scraper:
+    build:
+      context: ./scraper
+    container_name: outfit_builder_scraper
+    restart: unless-stopped
+    environment:
+      PORT: 8000
+    ports:
+      - "8000:8000"
+
+  backend:
+    build:
+      context: ./backend
+    container_name: outfit_builder_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      scraper:
+        condition: service_started
+    environment:
+      PORT: ${PORT:-4000}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://outfit_user:outfit_pass@db:5432/outfit_builder}
+      JWT_SECRET: ${JWT_SECRET:-change_me_in_production_secret}
+      SCRAPER_URL: ${SCRAPER_URL:-http://scraper:8000}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+    ports:
+      - "4000:4000"
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: outfit_builder_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000/api}
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:
