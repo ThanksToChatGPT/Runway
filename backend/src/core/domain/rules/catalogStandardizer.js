@@ -173,6 +173,18 @@ export function filterRestrictedProducts(products) {
 
 // ---------------------------------------------------------------- Conveniencia
 
+function standardizeSizes(rawSizes) {
+  const bySize = new Map();
+  for (const entry of rawSizes ?? []) {
+    const isObject = entry !== null && typeof entry === 'object';
+    const size = normalizeSize(isObject ? entry.size : entry);
+    if (!size) continue;
+    const isAvailable = isObject ? Boolean(entry.isAvailable ?? entry.in_stock ?? true) : true;
+    bySize.set(size, (bySize.get(size) ?? false) || isAvailable);
+  }
+  return [...bySize.entries()].map(([size, isAvailable]) => ({ size, isAvailable }));
+}
+
 /**
  * Estandariza un ítem crudo del scraper sin mutarlo.
  * Devuelve null si el ítem es contenido restringido o no pertenece a una
@@ -183,11 +195,10 @@ export function standardizeCatalogItem(raw) {
   const category = normalizeCategory(raw.category, raw.subcategory, raw.name);
   if (!category) return null;
 
-  const sizes = (raw.sizes ?? []).map(normalizeSize).filter(Boolean);
   return {
     ...raw,
     category,
     color: normalizeColor(raw.color) || null,
-    sizes: [...new Set(sizes)],
+    sizes: standardizeSizes(raw.sizes),
   };
 }

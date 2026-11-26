@@ -128,6 +128,18 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   # --------------------------------------------------------------- Catálogo
+  /stores:
+    get:
+      tags: [Catálogo]
+      summary: Listar tiendas activas para filtros del catálogo
+      responses:
+        "200":
+          description: Tiendas activas ordenadas por nombre
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicStoreList" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
   /products:
     get:
       tags: [Catálogo]
@@ -139,6 +151,7 @@ paths:
       security: [{}, { bearerAuth: [] }]
       parameters:
         - { in: query, name: q, schema: { type: string }, description: Texto libre (nombre, marca o subcategoría) }
+        - { in: query, name: ids, schema: { type: string }, description: Ids de productos separados por coma }
         - { in: query, name: minPrice, schema: { type: integer, minimum: 0 }, description: Precio mínimo en COP }
         - { in: query, name: maxPrice, schema: { type: integer, minimum: 0 }, description: Precio máximo en COP }
         - { in: query, name: brand, schema: { type: string }, description: Marcas }
@@ -164,6 +177,18 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ProductPage" }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /products/facets:
+    get:
+      tags: [Catálogo]
+      summary: Facetas disponibles del catálogo (colores, tallas, marcas, subcategorías y rango COP)
+      responses:
+        "200":
+          description: Valores disponibles en prendas visibles de tiendas activas
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogFacets" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /products/compare:
@@ -561,6 +586,24 @@ components:
       properties:
         id: { type: string, format: uuid }
         name: { type: string, nullable: true }
+    PublicStoreList:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/StoreRef" }
+    CatalogFacets:
+      type: object
+      properties:
+        colors: { type: array, items: { type: string } }
+        sizes: { type: array, items: { type: string } }
+        brands: { type: array, items: { type: string } }
+        subcategories: { type: array, items: { type: string } }
+        priceRange:
+          type: object
+          properties:
+            min: { type: integer, nullable: true }
+            max: { type: integer, nullable: true }
     ProductSummary:
       type: object
       properties:

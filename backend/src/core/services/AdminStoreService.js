@@ -149,7 +149,11 @@ function toCatalogProduct(raw, storeId, scrapedAt) {
       externalUrl: item.externalUrl,
       lastPriceUpdate: scrapedAt,
       images: imageUrls.map((imageUrl, index) => ({ imageUrl, isPrimary: index === 0 })),
-      sizeStocks: item.sizes.map((size) => ({ size, isAvailable: true })),
+      sizeStocks: (item.sizes ?? []).map((entry) =>
+        typeof entry === 'string'
+          ? { size: entry, isAvailable: true }
+          : { size: entry.size, isAvailable: Boolean(entry.isAvailable ?? true) },
+      ),
     });
   } catch (error) {
     if (error instanceof DomainError) return null; // dato inválido: se descarta solo este ítem

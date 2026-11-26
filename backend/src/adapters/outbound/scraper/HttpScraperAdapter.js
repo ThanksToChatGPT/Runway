@@ -33,11 +33,29 @@ function slugify(text) {
     .replace(/^-|-$/g, '');
 }
 
+function normalizeRawSizes(sizes) {
+  if (!Array.isArray(sizes)) return [];
+  return sizes
+    .map((entry) => {
+      if (entry !== null && typeof entry === 'object') {
+        const size = entry.size ?? entry.name ?? entry.label;
+        if (size === null || size === undefined || String(size).trim() === '') return null;
+        return {
+          size: String(size),
+          isAvailable: Boolean(entry.in_stock ?? entry.isAvailable ?? true),
+        };
+      }
+      if (entry === null || entry === undefined || String(entry).trim() === '') return null;
+      return { size: String(entry), isAvailable: true };
+    })
+    .filter(Boolean);
+}
+
 /**
  * Ítem del servicio Python → `RawScrapedProduct`. Solo traduce nombres de
  * campos; la limpieza y estandarización las hace el core (BR-02, BR-13).
  * Acepta tanto el formato actual del scraper (`title`, `product_url`,
- * `sizes: [{ size, in_stock }]`) como uno en camelCase.
+ * `sizes: [{ size, in_stock }]`) como uno en camelCase o strings simples.
  */
 export function toRawScrapedProduct(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -60,14 +78,7 @@ export function toRawScrapedProduct(raw) {
     imageUrls: Array.isArray(images)
       ? images.map((img) => (typeof img === 'string' ? img : img?.url)).filter((url) => typeof url === 'string')
       : [],
-    // Solo tallas disponibles: el contrato no distingue tallas agotadas.
-    sizes: Array.isArray(sizes)
-      ? sizes
-          .filter((size) => typeof size !== 'object' || size === null || (size.in_stock ?? size.isAvailable ?? true))
-          .map((size) => (size !== null && typeof size === 'object' ? size.size : size))
-          .filter((size) => size !== null && size !== undefined && String(size).trim() !== '')
-          .map(String)
-      : [],
+    sizes: normalizeRawSizes(sizes),
   };
 }
 
@@ -92,21 +103,21 @@ export class HttpScraperAdapter extends ScraperPort {
     try {
       url = new URL(baseUrl);
     } catch {
-      throw new Error('SCRAPER_SERVICE_URL no es una URL válida.');
+      throw new Error('SCRAPER_URL no es una URL válida.');
     }
     if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-      throw new Error('SCRAPER_SERVICE_URL debe usar http o https.');
+      throw new Error('SCRAPER_URL debe usar http o https.');
     }
     this.#baseUrl = url.href.replace(/\/+$/, '');
     this.#timeoutMs = timeoutMs;
     this.#fetch = fetchImpl;
   }
 
-  /** Lee `SCRAPER_SERVICE_URL` (o el antiguo `SCRAPER_URL`) y `SCRAPER_TIMEOUT_MS`. */
+  /** Lee `SCRAPER_URL` (con fallback a `SCRAPER_SERVICE_URL`) y `SCRAPER_TIMEOUT_MS`. */
   static fromEnv() {
     const timeout = Number.parseInt(process.env.SCRAPER_TIMEOUT_MS ?? '', 10);
     return new HttpScraperAdapter({
-      baseUrl: process.env.SCRAPER_SERVICE_URL || process.env.SCRAPER_URL || 'http://localhost:8000',
+      baseUrl: process.env.SCRAPER_URL || process.env.SCRAPER_SERVICE_URL || 'http://localhost:8000',
       timeoutMs: Number.isInteger(timeout) && timeout > 0 ? timeout : DEFAULT_SCRAPER_TIMEOUT_MS,
     });
   }

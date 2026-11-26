@@ -12,6 +12,7 @@ export function createCatalogController(catalogService) {
       const q = req.query;
       const page = await catalogService.searchProducts({
         text: firstValue(q.q),
+        ids: toList(q.ids),
         minPrice: toNumber(q.minPrice),
         maxPrice: toNumber(q.maxPrice),
         brands: toList(q.brand),
@@ -38,6 +39,16 @@ export function createCatalogController(catalogService) {
     async compare(req, res) {
       const comparison = await catalogService.compareProducts({ productIds: toList(req.query.ids) });
       res.status(200).json(comparison);
+    },
+
+    async facets(_req, res) {
+      const facets = await catalogService.getCatalogFacets();
+      res.status(200).json(facets);
+    },
+
+    async listStores(_req, res) {
+      const stores = await catalogService.listActiveStores();
+      res.status(200).json(stores);
     },
   };
 }

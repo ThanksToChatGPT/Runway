@@ -97,7 +97,37 @@ test('HttpScraperAdapter llama POST /scrape y traduce el formato del servicio Py
   assert.equal(item.externalUrl, 'https://tienda.example/a1');
   assert.equal(item.priceCop, 89900);
   assert.deepEqual(item.imageUrls, ['https://img.example/1.jpg']);
-  assert.deepEqual(item.sizes, ['M']);
+  assert.deepEqual(item.sizes, [
+    { size: 'M', isAvailable: true },
+    { size: 'L', isAvailable: false },
+  ]);
+});
+
+test('HttpScraperAdapter soporta tallas como strings y lee SCRAPER_URL con fallback', async () => {
+  const scraper = new HttpScraperAdapter({
+    baseUrl: 'http://scraper:8000',
+    fetchImpl: async () => jsonResponse([{ title: 'Buzo', url: 'https://t.co/b', price: 99000, sizes: ['S', 'M'] }]),
+  });
+  const [item] = await scraper.extractProductsByStore(store);
+  assert.deepEqual(item.sizes, [
+    { size: 'S', isAvailable: true },
+    { size: 'M', isAvailable: true },
+  ]);
+
+  const prevUrl = process.env.SCRAPER_URL;
+  const prevLegacy = process.env.SCRAPER_SERVICE_URL;
+  try {
+    process.env.SCRAPER_URL = 'http://primary:8000';
+    process.env.SCRAPER_SERVICE_URL = 'http://fallback:8000';
+    assert.ok(HttpScraperAdapter.fromEnv() instanceof HttpScraperAdapter);
+    delete process.env.SCRAPER_URL;
+    assert.ok(HttpScraperAdapter.fromEnv() instanceof HttpScraperAdapter);
+  } finally {
+    if (prevUrl === undefined) delete process.env.SCRAPER_URL;
+    else process.env.SCRAPER_URL = prevUrl;
+    if (prevLegacy === undefined) delete process.env.SCRAPER_SERVICE_URL;
+    else process.env.SCRAPER_SERVICE_URL = prevLegacy;
+  }
 });
 
 test('HttpScraperAdapter convierte cualquier falla en ScraperUnavailableError', async () => {

@@ -14,6 +14,7 @@
  *
  * @typedef {Object} SearchProductsInput
  * @property {string} [text]
+ * @property {string[]} [ids]
  * @property {number} [minPrice]
  * @property {number} [maxPrice]
  * @property {string[]} [brands]
@@ -101,6 +102,20 @@
 /**
  * @typedef {Object} ProductComparisonDto
  * @property {ProductDetailDto[]} products en el mismo orden en que se pidieron.
+ */
+
+/**
+ * @typedef {Object} PublicStoresDto
+ * @property {StoreRefDto[]} items tiendas activas visibles en el catálogo.
+ */
+
+/**
+ * @typedef {Object} CatalogFacetsDto
+ * @property {string[]} colors
+ * @property {string[]} sizes
+ * @property {string[]} brands
+ * @property {string[]} subcategories
+ * @property {{ min: number|null, max: number|null }} priceRange
  */
 
 // ------------------------------------------------------------------ Mappers

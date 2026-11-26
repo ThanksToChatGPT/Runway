@@ -10,6 +10,7 @@ import { notImplemented } from '../../contract.js';
  *
  * @typedef {Object} ProductSearchCriteria
  * @property {string|null} [text]               texto libre (nombre, marca, subcategoría).
+ * @property {string[]} [ids]                   filtrar por lista de ids de productos.
  * @property {number|null} [minPrice]           COP, inclusive.
  * @property {number|null} [maxPrice]           COP, inclusive.
  * @property {string[]} [brands]                una o más marcas (US-21).
@@ -78,5 +79,15 @@ export class ProductRepository {
    */
   async upsertMany(storeId, products) {
     notImplemented('ProductRepository', 'upsertMany');
+  }
+
+  /**
+   * Valores disponibles en productos visibles de tiendas activas para poblar
+   * los filtros del catálogo (colores, tallas, marcas, subcategorías y rango COP).
+   * @param {{ activeStoreIds?: string[] }} [options]
+   * @returns {Promise<import('../../inbound/dtos/catalogDtos.js').CatalogFacetsDto>}
+   */
+  async getFacets(options = {}) {
+    notImplemented('ProductRepository', 'getFacets');
   }
 }

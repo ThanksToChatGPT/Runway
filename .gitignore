@@ -11,6 +11,9 @@ node_modules/
 dist/
 build/
 .vite/
+.next/
+next-env.d.ts
+*.tsbuildinfo
 coverage/
 
 # Python
@@ -25,3 +28,12 @@ npm-debug.log*
 Thumbs.db
 
 
+
+# LaTeX
+*.tex
+*.aux
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz

@@ -7,7 +7,6 @@ from app.polite_http import BudgetExhausted, ScraperError
 SIZE_KEYS = ("Talla", "Size", "talla", "size")
 COLOR_KEYS = ("Color", "color")
 MATERIAL_KEYS = ("Material", "material", "Composición tela 1")
-UNLIMITED = 9999          # VTEX muestra 10000 cuando la tienda no controla inventario: no es un conteo real
 
 
 def _first(d, keys):
@@ -94,24 +93,18 @@ class VtexExtractor(BaseExtractor):
         return ids
 
     def _parse(self, p):
-        prices, sizes, size_units, images, meta = [], {}, {}, [], {}
+        prices, sizes, images, meta = [], {}, [], {}
         colors = list(_first(p, COLOR_KEYS))
-        total, unlimited = 0, False
         for item in p.get("items", []):
-            qty, available = 0, False
+            available = False
             for seller in item.get("sellers", []):
                 offer = seller.get("commertialOffer", {})
                 if offer.get("Price"):
                     prices.append(offer["Price"])
-                q = offer.get("AvailableQuantity", 0) or 0
-                qty = max(qty, q)
-                if q > 0:
+                if (offer.get("AvailableQuantity", 0) or 0) > 0:
                     available = True
-            unlimited = unlimited or qty > UNLIMITED
-            total += qty
             for label in _first(item, SIZE_KEYS):
                 sizes[label] = sizes.get(label, False) or available
-                size_units[label] = size_units.get(label, 0) + qty
             for color in _first(item, COLOR_KEYS):
                 if color not in colors:
                     colors.append(color)
@@ -129,7 +122,6 @@ class VtexExtractor(BaseExtractor):
         link = p.get("link") or f"{self.base_url}/{p.get('linkText', '')}/p"
         if link.startswith("/"):
             link = self.base_url + link
-        has_items = bool(p.get("items"))
         # packs: VTEX marca los kits y cuántas copias trae un pedido; el nombre también puede decir "Pack 3 medias"
         is_kit = any(bool(item.get("isKit")) for item in p.get("items", []))
         multiplier = _max_multiplier(p.get("items", []))
@@ -139,6 +131,4 @@ class VtexExtractor(BaseExtractor):
             category=" ".join(p.get("categories", []) or []), description=p.get("description", "") or "",
             colors=colors, sizes=list(sizes.items()), images=images, image_meta=meta,
             material=" ".join(_first(p, MATERIAL_KEYS)),
-            units=None if (unlimited or not has_items) else total,
-            size_units={} if unlimited else size_units,
             is_kit=is_kit, unit_multiplier=multiplier if multiplier > 1 else None)

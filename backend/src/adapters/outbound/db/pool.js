@@ -55,11 +55,3 @@ export async function closePool() {
   instance = null;
   await pool.end();
 }
-
-/**
- * @deprecated Usado solo por el prototipo anterior (`src/index.js`).
- * Los adaptadores nuevos usan `getPool()`.
- */
-export function createPool(connectionString) {
-  return new Pool({ connectionString });
-}

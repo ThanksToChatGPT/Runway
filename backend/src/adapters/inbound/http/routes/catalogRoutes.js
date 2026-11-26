@@ -6,7 +6,8 @@ export function createCatalogRoutes({ controller, optionalAuthenticate, publicLi
   const router = Router();
   router.use(publicLimiter);
   router.get('/', optionalAuthenticate, asyncHandler(controller.search));
-  // `/compare` va antes de `/:id` para que "compare" no se lea como un id.
+  // `/facets` y `/compare` van antes de `/:id` para no confundirse con un id.
+  router.get('/facets', asyncHandler(controller.facets));
   router.get('/compare', asyncHandler(controller.compare));
   router.get('/:id', asyncHandler(controller.getById));
   return router;

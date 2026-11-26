@@ -1,11 +1,16 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { api, setAuthSession } from '@/services/api';
+import { useApp } from '@/context/AppContext';
+import { api, ApiError } from '@/services/api';
 
 export default function AuthPage() {
+  const router = useRouter();
+  const { applySession, toast } = useApp();
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [name, setName] = useState('');
+  const [country, setCountry] = useState('CO');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -17,90 +22,136 @@ export default function AuthPage() {
     setLoading(true);
 
     try {
-      const res =
+      const session =
         mode === 'login'
-          ? await api.login({ email, password })
-          : await api.register({ name, email, password });
+          ? await api.login({ email: email.trim(), password })
+          : await api.register({
+              name: name.trim(),
+              email: email.trim(),
+              password,
+              country: country.trim() || null,
+            });
 
-      setAuthSession(res.token, res.user);
-      window.location.href = '/';
+      applySession(session);
+      toast(
+        mode === 'login'
+          ? `¡Bienvenido de nuevo, ${session.user.name}!`
+          : `Cuenta creada. ¡Hola, ${session.user.name}!`,
+      );
+      router.push('/');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error de autenticación');
+      if (err instanceof ApiError) {
+        setError(err.message);
+      } else {
+        setError(
+          err instanceof Error ? err.message : 'No se pudo iniciar sesión.',
+        );
+      }
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="mx-auto max-w-md rounded-lg border bg-white p-6 shadow-sm">
-      <div className="mb-4 flex gap-2 border-b pb-3">
+    <section className="ed-section" style={{ maxWidth: 460, margin: '12px auto', width: '100%' }}>
+      <h1 className="ed-h1">
+        {mode === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}
+      </h1>
+
+      <div className="row2" style={{ marginBottom: 14 }}>
         <button
           type="button"
-          onClick={() => setMode('login')}
-          className={`flex-1 rounded-md py-2 text-sm font-medium ${
-            mode === 'login' ? 'bg-gray-900 text-white' : 'text-gray-600'
-          }`}
+          className="btn"
+          style={{ flex: 1 }}
+          aria-pressed={mode === 'login'}
+          onClick={() => {
+            setMode('login');
+            setError('');
+          }}
         >
           Iniciar sesión
         </button>
         <button
           type="button"
-          onClick={() => setMode('register')}
-          className={`flex-1 rounded-md py-2 text-sm font-medium ${
-            mode === 'register' ? 'bg-gray-900 text-white' : 'text-gray-600'
-          }`}
+          className="btn"
+          style={{ flex: 1 }}
+          aria-pressed={mode === 'register'}
+          onClick={() => {
+            setMode('register');
+            setError('');
+          }}
         >
           Registrarse
         </button>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 12 }}>
         {mode === 'register' && (
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Nombre</label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
-              required
-            />
-          </div>
+          <>
+            <label style={{ display: 'grid', gap: 4 }}>
+              <span className="small mut">Nombre</span>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Laura Gómez"
+                required
+              />
+            </label>
+            <label style={{ display: 'grid', gap: 4 }}>
+              <span className="small mut">País (opcional)</span>
+              <input
+                type="text"
+                value={country}
+                onChange={(e) => setCountry(e.target.value)}
+                placeholder="CO"
+              />
+            </label>
+          </>
         )}
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Correo</label>
+        <label style={{ display: 'grid', gap: 4 }}>
+          <span className="small mut">Correo electrónico</span>
           <input
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+            placeholder="laura@example.com"
             required
           />
-        </div>
+        </label>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Contraseña</label>
+        <label style={{ display: 'grid', gap: 4 }}>
+          <span className="small mut">Contraseña</span>
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
-            minLength={6}
+            minLength={mode === 'register' ? 8 : undefined}
+            maxLength={72}
             required
           />
-        </div>
+          {mode === 'register' && (
+            <span className="small mut">
+              Mínimo 8 caracteres, incluyendo al menos una letra y un número.
+            </span>
+          )}
+        </label>
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && (
+          <div className="warn" role="alert">
+            {error}
+          </div>
+        )}
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full rounded-md bg-gray-900 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
-        >
-          {loading ? 'Procesando...' : mode === 'login' ? 'Entrar' : 'Crear cuenta'}
+        <button type="submit" disabled={loading} className="btn pri">
+          {loading
+            ? 'Procesando…'
+            : mode === 'login'
+              ? 'Entrar'
+              : 'Crear cuenta'}
         </button>
       </form>
-    </div>
+    </section>
   );
 }

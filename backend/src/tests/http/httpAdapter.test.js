@@ -163,6 +163,18 @@ test('catálogo: búsqueda con filtros, detalle, comparación y 404', async () =
   const missing = await call('GET', '/products/no-existe');
   assert.equal(missing.status, 404);
   assert.match(missing.body.error, /producto/);
+
+  const storesRes = await call('GET', '/stores');
+  assert.equal(storesRes.status, 200);
+  assert.deepEqual(storesRes.body, { items: [{ id: store.id, name: store.name }] });
+
+  const facetsRes = await call('GET', '/products/facets');
+  assert.equal(facetsRes.status, 200);
+  assert.deepEqual(facetsRes.body.priceRange, { min: 100000, max: 250000 });
+
+  const byIdsRes = await call('GET', `/products?ids=${shoes.id},inexistente`);
+  assert.equal(byIdsRes.status, 200);
+  assert.deepEqual(byIdsRes.body.items.map((p) => p.id), [shoes.id]);
 });
 
 test('outfit builder: borrador → piezas → guardar → listar → detalle', async () => {

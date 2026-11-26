@@ -11,11 +11,6 @@ import { fileURLToPath } from 'node:url';
 
 const coreDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../core');
 
-/** Prototipo legado que aún usa src/index.js (importa bcryptjs/jsonwebtoken); se retira en la Fase 4. */
-const LEGACY_SERVICES = ['authService.js', 'catalogService.js', 'outfitService.js', 'adminService.js'].map((file) =>
-  join(coreDir, 'services', file),
-);
-
 function listJsFiles(dir) {
   return readdirSync(dir).flatMap((entry) => {
     const full = join(dir, entry);
@@ -49,8 +44,8 @@ test('ningún archivo de core/ importa express, drivers de PostgreSQL ni cliente
   }
 });
 
-test('dominio, puertos y servicios nuevos solo importan módulos dentro de core/', () => {
-  const files = listJsFiles(coreDir).filter((file) => !LEGACY_SERVICES.includes(file));
+test('dominio, puertos y servicios solo importan módulos dentro de core/', () => {
+  const files = listJsFiles(coreDir);
   for (const file of files) {
     for (const specifier of importsOf(readFileSync(file, 'utf8'))) {
       const name = relative(coreDir, file);

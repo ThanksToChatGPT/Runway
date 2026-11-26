@@ -156,3 +156,27 @@ test('compareProducts exige entre 2 y 4 productos distintos y disponibles', asyn
   await assert.rejects(service.compareProducts({ productIds: [jeans.id, 'product-99'] }), NotFoundError);
   await assert.rejects(service.compareProducts({ productIds: [jeans.id, hidden.id] }), NotFoundError);
 });
+
+test('listActiveStores y getCatalogFacets devuelven tiendas activas y facetas visibles', async () => {
+  const { service, bogota, cali } = await setup();
+  const stores = await service.listActiveStores();
+  assert.deepEqual(stores.items, [
+    { id: bogota.id, name: 'Tienda Bogotá' },
+    { id: cali.id, name: 'Tienda Cali' },
+  ]);
+
+  const facets = await service.getCatalogFacets();
+  assert.deepEqual(facets.colors, ['black', 'navy', 'white']);
+  assert.deepEqual(facets.sizes, ['40', 'M']);
+  assert.deepEqual(facets.brands, ['Arturo Calle', 'Bosi', 'Koaj']);
+  assert.deepEqual(facets.priceRange, { min: 39900, max: 229900 });
+});
+
+test('searchProducts filtra por ids omitiendo productos ocultos o inexistentes', async () => {
+  const { service, productRepository, shirtBlack, jeans, hidden } = await setup();
+  const page = await service.searchProducts({ ids: [shirtBlack.id, jeans.id, hidden.id, 'no-existe'] });
+
+  assert.deepEqual(productRepository.lastCriteria.ids, [shirtBlack.id, jeans.id, hidden.id, 'no-existe']);
+  assert.deepEqual(page.items.map((p) => p.id), [shirtBlack.id, jeans.id]);
+  assert.equal(page.totalItems, 2);
+});

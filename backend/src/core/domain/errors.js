@@ -52,16 +52,3 @@ export class ConflictError extends DomainError {
     super(message, { ...options, code: 'CONFLICT' });
   }
 }
-
-/**
- * @deprecated Error legado con código HTTP embebido. Lo siguen usando los
- * servicios y adaptadores actuales; se reemplazará por la jerarquía `DomainError`
- * cuando se migre la capa de aplicación.
- */
-export class AppError extends Error {
-  constructor(message, statusCode = 400) {
-    super(message);
-    this.name = 'AppError';
-    this.statusCode = statusCode;
-  }
-}

@@ -12,14 +12,14 @@ const PORT_METHODS = {
   UserRepository: ['findByEmail', 'findById', 'create'],
   PreferenceRepository: ['findByUserId', 'upsert'],
   StoreRepository: ['findAll', 'findById', 'create', 'update', 'setActive'],
-  ProductRepository: ['search', 'findById', 'findByIds', 'upsertMany'],
+  ProductRepository: ['search', 'findById', 'findByIds', 'upsertMany', 'getFacets'],
   OutfitRepository: ['create', 'findByUserId', 'findByIdForUser'],
   PasswordHasher: ['hash', 'compare'],
   TokenService: ['sign', 'verify', 'revoke'],
   ScraperPort: ['extractProductsByStore'],
   // Entrantes
   AuthAndUserPort: ['register', 'login', 'logout', 'verifySession', 'getPreferencesSummary', 'updatePreferences'],
-  CatalogSearchPort: ['searchProducts', 'getProductDetail', 'compareProducts'],
+  CatalogSearchPort: ['searchProducts', 'getProductDetail', 'compareProducts', 'listActiveStores', 'getCatalogFacets'],
   OutfitBuilderPort: ['startEmptyOutfit', 'assignOrReplacePiece', 'saveOutfit', 'getUserOutfits', 'getOutfitById'],
   AdminStorePort: ['createStore', 'updateStore', 'toggleStoreStatus', 'listStores', 'runStoreScraping'],
 };

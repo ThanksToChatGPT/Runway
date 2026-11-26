@@ -15,8 +15,6 @@ class RawProduct:
     sizes: list = field(default_factory=list)  # lista de (etiqueta, disponible)
     images: list = field(default_factory=list)
     material: str = ""
-    units: object = None                      # unidades en stock (int) o None si la tienda no lo dice
-    size_units: dict = field(default_factory=dict)   # talla -> unidades
     image_meta: dict = field(default_factory=dict)   # url de imagen -> pistas de texto (alt, etiqueta)
     is_kit: bool = False                      # VTEX: el producto es un kit (varias piezas juntas)
     unit_multiplier: object = None            # VTEX: cuántas copias trae una compra

@@ -1,130 +1,320 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { api } from '@/services/api';
-import type { Store } from '@/types';
+import Link from 'next/link';
+import { useCallback, useEffect, useState } from 'react';
+import { useApp } from '@/context/AppContext';
+import { formatUpdatedAt } from '@/domain/product';
+import { api, ApiError } from '@/services/api';
+import type { ScrapingResult, Store } from '@/types';
 
 export default function AdminPage() {
+  const { user, hydrated, toast, handleError } = useApp();
   const [stores, setStores] = useState<Store[]>([]);
-  const [name, setName] = useState('');
-  const [slug, setSlug] = useState('');
-  const [baseUrl, setBaseUrl] = useState('');
-  const [status, setStatus] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [accessError, setAccessError] = useState('');
 
-  async function loadStores() {
+  // Crear tienda
+  const [name, setName] = useState('');
+  const [baseUrl, setBaseUrl] = useState('');
+  const [isActive, setIsActive] = useState(true);
+  const [creating, setCreating] = useState(false);
+
+  // Editar tienda inline
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editBaseUrl, setEditBaseUrl] = useState('');
+
+  // Scraping en curso / último resultado por tienda
+  const [scrapingId, setScrapingId] = useState<string | null>(null);
+  const [scrapeResults, setScrapeResults] = useState<
+    Record<string, ScrapingResult>
+  >({});
+
+  const loadStores = useCallback(async () => {
+    setLoading(true);
+    setAccessError('');
     try {
       const res = await api.adminListStores();
       setStores(res.items);
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : 'Acceso restringido a administradores');
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        setAccessError(err.message);
+      } else {
+        handleError(err, 'No se pudieron cargar las tiendas.');
+      }
+    } finally {
+      setLoading(false);
     }
-  }
+  }, [handleError]);
 
   useEffect(() => {
+    if (!hydrated || !user) return;
     loadStores();
-  }, []);
+  }, [hydrated, loadStores, user]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    setStatus('');
+    setCreating(true);
     try {
-      await api.adminCreateStore({ name, slug, base_url: baseUrl });
+      await api.adminCreateStore({
+        name: name.trim(),
+        baseUrl: baseUrl.trim(),
+        isActive,
+      });
       setName('');
-      setSlug('');
       setBaseUrl('');
+      setIsActive(true);
       await loadStores();
-      setStatus('Tienda creada.');
+      toast('Tienda registrada');
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : 'Error creando tienda');
+      handleError(err, 'No se pudo registrar la tienda.');
+    } finally {
+      setCreating(false);
     }
   }
 
-  async function handleScrape(id: string) {
-    setStatus('Ejecutando scraping...');
+  function startEdit(store: Store) {
+    setEditingId(store.id);
+    setEditName(store.name);
+    setEditBaseUrl(store.baseUrl);
+  }
+
+  async function handleUpdate(id: string) {
     try {
-      const res = await api.adminTriggerScrape(id);
-      setStatus(`Scraping completado: ${res.importedCount} productos importados.`);
+      const updated = await api.adminUpdateStore(id, {
+        name: editName.trim(),
+        baseUrl: editBaseUrl.trim(),
+      });
+      setStores((prev) => prev.map((s) => (s.id === id ? updated : s)));
+      setEditingId(null);
+      toast('Tienda actualizada');
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : 'Error ejecutando scraping');
+      handleError(err, 'No se pudo actualizar la tienda.');
     }
   }
 
-  async function handleDelete(id: string) {
-    await api.adminDeleteStore(id);
-    await loadStores();
+  async function handleToggleStatus(store: Store) {
+    try {
+      const updated = await api.adminSetStoreStatus(store.id, !store.isActive);
+      setStores((prev) => prev.map((s) => (s.id === store.id ? updated : s)));
+      toast(updated.isActive ? 'Tienda activada' : 'Tienda desactivada');
+    } catch (err) {
+      handleError(err, 'No se pudo cambiar el estado de la tienda.');
+    }
+  }
+
+  async function handleScrape(store: Store) {
+    setScrapingId(store.id);
+    try {
+      const result = await api.adminTriggerScrape(store.id);
+      setScrapeResults((prev) => ({ ...prev, [store.id]: result }));
+      if (result.status === 'success') {
+        toast(result.message || 'Catálogo actualizado');
+        await loadStores();
+      } else {
+        toast(result.message || 'El scraping falló');
+      }
+    } catch (err) {
+      handleError(err, 'No se pudo ejecutar el scraping.');
+    } finally {
+      setScrapingId(null);
+    }
+  }
+
+  if (!hydrated) {
+    return (
+      <section className="ed-section">
+        <p className="mut">Cargando…</p>
+      </section>
+    );
+  }
+
+  if (!user) {
+    return (
+      <section className="ed-section">
+        <h1 className="ed-h1">Panel Admin — Tiendas y Scraping</h1>
+        <div className="empty">
+          <b>Inicia sesión con una cuenta administradora.</b>
+          <div className="row2 center" style={{ marginTop: 12 }}>
+            <Link href="/auth" className="btn pri">
+              Ingresar
+            </Link>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (accessError) {
+    return (
+      <section className="ed-section">
+        <h1 className="ed-h1">Panel Admin — Tiendas y Scraping</h1>
+        <div className="warn" role="alert">
+          {accessError}
+        </div>
+      </section>
+    );
   }
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Panel Admin — Tiendas y Scraping</h1>
+    <>
+      <section className="ed-section">
+        <h1 className="ed-h1">Panel Admin — Tiendas y Scraping</h1>
 
-      <form
-        onSubmit={handleCreate}
-        className="grid grid-cols-1 gap-3 rounded-lg border bg-white p-4 shadow-sm md:grid-cols-4"
-      >
-        <input
-          type="text"
-          placeholder="Nombre de tienda"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="rounded-md border px-3 py-2 text-sm"
-          required
-        />
-        <input
-          type="text"
-          placeholder="Slug (ej. mock)"
-          value={slug}
-          onChange={(e) => setSlug(e.target.value)}
-          className="rounded-md border px-3 py-2 text-sm"
-          required
-        />
-        <input
-          type="url"
-          placeholder="https://tienda-ejemplo.co"
-          value={baseUrl}
-          onChange={(e) => setBaseUrl(e.target.value)}
-          className="rounded-md border px-3 py-2 text-sm"
-          required
-        />
-        <button
-          type="submit"
-          className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
-        >
-          Agregar tienda
-        </button>
-      </form>
+        <form onSubmit={handleCreate} className="row2" style={{ marginBottom: 14 }}>
+          <input
+            type="text"
+            placeholder="Nombre de tienda (ej. Tienda Bogotá)"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+            style={{ flex: '1 1 200px' }}
+          />
+          <input
+            type="url"
+            placeholder="https://tienda-ejemplo.co"
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+            required
+            style={{ flex: '2 1 260px' }}
+          />
+          <label className="row2" style={{ margin: 0, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={isActive}
+              onChange={(e) => setIsActive(e.target.checked)}
+            />
+            <span>Activa</span>
+          </label>
+          <button type="submit" disabled={creating} className="btn pri">
+            {creating ? 'Registrando…' : 'Registrar tienda'}
+          </button>
+        </form>
 
-      {status && <p className="text-sm text-gray-700">{status}</p>}
+        {loading ? (
+          <p className="mut">Cargando tiendas…</p>
+        ) : stores.length === 0 ? (
+          <div className="empty">No hay tiendas registradas todavía.</div>
+        ) : (
+          <ul className="list">
+            {stores.map((store) => {
+              const res = scrapeResults[store.id];
+              const isEditing = editingId === store.id;
+              return (
+                <li
+                  key={store.id}
+                  style={{ display: 'grid', gap: 10, alignItems: 'stretch' }}
+                >
+                  {isEditing ? (
+                    <div className="row2" style={{ margin: 0 }}>
+                      <input
+                        type="text"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        aria-label="Editar nombre"
+                        style={{ flex: '1 1 180px' }}
+                      />
+                      <input
+                        type="url"
+                        value={editBaseUrl}
+                        onChange={(e) => setEditBaseUrl(e.target.value)}
+                        aria-label="Editar URL"
+                        style={{ flex: '2 1 240px' }}
+                      />
+                      <button
+                        type="button"
+                        className="btn pri"
+                        onClick={() => handleUpdate(store.id)}
+                      >
+                        Guardar
+                      </button>
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => setEditingId(null)}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  ) : (
+                    <div
+                      className="row2"
+                      style={{ justifyContent: 'space-between', margin: 0 }}
+                    >
+                      <div>
+                        <b>{store.name}</b>{' '}
+                        <span
+                          className="small"
+                          style={{
+                            color: store.isActive ? 'var(--ok)' : 'var(--warn)',
+                            fontWeight: 700,
+                          }}
+                        >
+                          · {store.isActive ? 'Activa' : 'Inactiva'}
+                        </span>
+                        <div className="small mut">
+                          {store.baseUrl} · Último scraping:{' '}
+                          {formatUpdatedAt(store.lastScrapedAt)}
+                        </div>
+                      </div>
 
-      <div className="space-y-3">
-        {stores.map((store) => (
-          <div
-            key={store.id}
-            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-white p-4 shadow-sm"
-          >
-            <div>
-              <p className="font-semibold text-gray-900">
-                {store.name} <span className="text-xs text-gray-500">({store.slug})</span>
-              </p>
-              <p className="text-xs text-gray-500">{store.base_url}</p>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => handleScrape(store.id)}
-                className="rounded bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
-              >
-                Ejecutar scraping
-              </button>
-              <button
-                onClick={() => handleDelete(store.id)}
-                className="rounded border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
-              >
-                Eliminar
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
+                      <div className="row2" style={{ margin: 0 }}>
+                        <button
+                          type="button"
+                          className="mini"
+                          onClick={() => startEdit(store)}
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          className="mini"
+                          onClick={() => handleToggleStatus(store)}
+                        >
+                          {store.isActive ? 'Desactivar' : 'Activar'}
+                        </button>
+                        <button
+                          type="button"
+                          className="mini pri"
+                          disabled={!store.isActive || scrapingId === store.id}
+                          onClick={() => handleScrape(store)}
+                        >
+                          {scrapingId === store.id
+                            ? 'Extrayendo…'
+                            : 'Ejecutar scraping'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {res && (
+                    <div
+                      className={
+                        res.status === 'success' ? 'matchnote ok' : 'warn'
+                      }
+                      style={{ margin: 0 }}
+                    >
+                      <div>
+                        <b>
+                          {res.status === 'success'
+                            ? 'Scraping completado:'
+                            : 'Scraping fallido:'}
+                        </b>{' '}
+                        {res.message || '—'}
+                      </div>
+                      <div className="small">
+                        Recibidos: {res.receivedCount} · Nuevos:{' '}
+                        {res.insertedCount} · Actualizados: {res.updatedCount} ·
+                        Descartados: {res.discardedCount}
+                      </div>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+    </>
   );
 }

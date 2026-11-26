@@ -119,6 +119,7 @@ export class InMemoryProductRepository extends ProductRepository {
 
     let items = this.all().filter((p) => {
       if (p.isHidden) return false;
+      if (has(criteria.ids) && !criteria.ids.includes(String(p.id))) return false;
       if (text && ![p.name, p.brand, p.subcategory].some((field) => field?.toLowerCase().includes(text))) return false;
       if (criteria.minPrice != null && p.priceCop < criteria.minPrice) return false;
       if (criteria.maxPrice != null && p.priceCop > criteria.maxPrice) return false;
@@ -169,6 +170,23 @@ export class InMemoryProductRepository extends ProductRepository {
       this.#byId.set(product.id, product);
     }
     return { inserted, updated };
+  }
+
+  async getFacets({ activeStoreIds } = {}) {
+    const allowedStores = Array.isArray(activeStoreIds) ? new Set(activeStoreIds) : null;
+    const visible = this.all().filter((p) => !p.isHidden && (!allowedStores || allowedStores.has(p.storeId)));
+    const uniq = (values) => [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    const prices = visible.map((p) => p.priceCop);
+    return {
+      colors: uniq(visible.map((p) => p.color)),
+      sizes: uniq(visible.flatMap((p) => p.getAvailableSizes())),
+      brands: uniq(visible.map((p) => p.brand)),
+      subcategories: uniq(visible.map((p) => p.subcategory)),
+      priceRange: {
+        min: prices.length > 0 ? Math.min(...prices) : null,
+        max: prices.length > 0 ? Math.max(...prices) : null,
+      },
+    };
   }
 }
 

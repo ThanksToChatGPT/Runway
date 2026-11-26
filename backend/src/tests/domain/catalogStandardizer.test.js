@@ -66,8 +66,36 @@ test('filterRestrictedProducts conserva solo productos permitidos', () => {
 test('standardizeCatalogItem normaliza un ítem crudo sin mutarlo', () => {
   const raw = { name: 'Camiseta básica', category: 'Ropa', color: 'BLK', sizes: ['m', 'Mediana', 'L'] };
   const result = standardizeCatalogItem(raw);
-  assert.deepEqual(result, { ...raw, category: 'top', color: 'black', sizes: ['M', 'L'] });
+  assert.deepEqual(result, {
+    ...raw,
+    category: 'top',
+    color: 'black',
+    sizes: [
+      { size: 'M', isAvailable: true },
+      { size: 'L', isAvailable: true },
+    ],
+  });
   assert.equal(raw.color, 'BLK');
   assert.equal(standardizeCatalogItem({ name: 'Gorra', category: 'Accesorios' }), null);
   assert.equal(standardizeCatalogItem({ name: 'Dildo', category: 'Camiseta' }), null);
+});
+
+test('standardizeCatalogItem preserva tallas agotadas y fusiona duplicados manteniendo disponibilidad', () => {
+  const raw = {
+    name: 'Jean slim',
+    category: 'Pantalones',
+    color: 'Azul',
+    sizes: [
+      { size: '30', isAvailable: false },
+      { size: '32', isAvailable: true },
+      { size: 'EU 30', isAvailable: true },
+      { size: '34', in_stock: false },
+    ],
+  };
+  const result = standardizeCatalogItem(raw);
+  assert.deepEqual(result.sizes, [
+    { size: '30', isAvailable: true },
+    { size: '32', isAvailable: true },
+    { size: '34', isAvailable: false },
+  ]);
 });

@@ -1,120 +1,227 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { api, formatCop } from '@/services/api';
-import type { Product } from '@/types';
+import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react';
+import ProductImage from '@/components/ProductImage';
+import { useApp } from '@/context/AppContext';
+import { formatCOP } from '@/domain/money';
+import {
+  colorLabel,
+  formatUpdatedAt,
+  productDetailToOutfitItem,
+  productGroup,
+} from '@/domain/product';
+import { api } from '@/services/api';
+import type { ProductDetail } from '@/types';
 
 export default function ComparePage() {
-  const [products, setProducts] = useState<Product[]>([]);
+  const { cmp, toggleCmp, add, hydrated, handleError } = useApp();
+  const [urlIds, setUrlIds] = useState<string[] | null>(null);
+  const [products, setProducts] = useState<ProductDetail[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const idsParam = params.get('ids');
-    const saved = localStorage.getItem('ob_compare_ids');
-    const ids = idsParam
-      ? idsParam.split(',').filter(Boolean)
-      : saved
-      ? (JSON.parse(saved) as string[])
-      : [];
+    const raw = params.get('ids');
+    if (raw) {
+      setUrlIds(raw.split(',').map((s) => s.trim()).filter(Boolean));
+    }
+  }, []);
 
-    if (ids.length === 0) {
+  const activeIds = useMemo(
+    () => (urlIds ?? cmp).slice(0, 4),
+    [urlIds, cmp],
+  );
+
+  useEffect(() => {
+    if (!hydrated && urlIds === null) return;
+    if (activeIds.length < 2) {
+      setProducts([]);
       setLoading(false);
       return;
     }
 
+    let cancelled = false;
+    setLoading(true);
     api
-      .compareProducts(ids)
-      .then((res) => setProducts(res.items))
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, []);
+      .compareProducts(activeIds)
+      .then((res) => {
+        if (!cancelled) setProducts(res.products);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setProducts([]);
+          handleError(err, 'No pudimos cargar la comparación.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
 
-  if (loading) return <p className="text-sm text-gray-500">Cargando comparación...</p>;
+    return () => {
+      cancelled = true;
+    };
+  }, [activeIds, handleError, hydrated, urlIds]);
 
-  if (products.length === 0) {
+  function handleRemove(id: string) {
+    if (urlIds) {
+      const next = urlIds.filter((item) => item !== id);
+      setUrlIds(next.length > 0 ? next : null);
+    }
+    if (cmp.includes(id)) {
+      toggleCmp(id);
+    }
+  }
+
+  if (loading) {
     return (
-      <div className="rounded-lg border bg-white p-8 text-center text-sm text-gray-500">
-        Selecciona prendas desde el catálogo con el botón &quot;Comparar&quot; para verlas lado a lado.
-      </div>
+      <section className="ed-section">
+        <p className="mut">Cargando comparación…</p>
+      </section>
     );
   }
 
-  return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold text-gray-900">Comparador lado a lado</h1>
+  if (products.length < 2) {
+    return (
+      <section className="ed-section">
+        <h1 className="ed-h1">Comparador</h1>
+        <div className="empty">
+          Marca al menos dos prendas (hasta 4) con “Comparar” en el{' '}
+          <Link href="/">catálogo</Link>.
+        </div>
+      </section>
+    );
+  }
 
-      <div className="overflow-x-auto rounded-lg border bg-white shadow-sm">
-        <table className="w-full text-left text-sm">
+  const minPrice = Math.min(...products.map((p) => p.priceCop));
+  const sharedScore = (a: ProductDetail, b: ProductDetail) =>
+    Number(productGroup(a) === productGroup(b)) +
+    Number(Boolean(a.color) && a.color === b.color) +
+    Number(Boolean(a.brand) && a.brand === b.brand) +
+    Number(Boolean(a.material) && a.material === b.material);
+
+  const maxShared = Math.max(
+    0,
+    ...products.flatMap((a) =>
+      products.filter((b) => b.id !== a.id).map((b) => sharedScore(a, b)),
+    ),
+  );
+
+  const row = (
+    label: string,
+    render: (p: ProductDetail) => React.ReactNode,
+    highlightCheapest = false,
+  ) => (
+    <tr>
+      <th scope="row">{label}</th>
+      {products.map((p) => (
+        <td
+          key={p.id}
+          className={highlightCheapest && p.priceCop === minPrice ? 'min' : ''}
+        >
+          {render(p)}
+        </td>
+      ))}
+    </tr>
+  );
+
+  return (
+    <section className="ed-section">
+      <h1 className="ed-h1">Comparador</h1>
+      {maxShared >= 2 && (
+        <p className="matchnote ok">
+          <b>Parecidas entre sí:</b> comparten tipo, color o marca. La opción más
+          barata queda marcada en verde.
+        </p>
+      )}
+
+      <div className="tw">
+        <table className="ed-table">
           <thead>
-            <tr className="border-b bg-gray-50">
-              <th className="p-4 font-semibold text-gray-600">Atributo</th>
+            <tr>
+              <th />
               {products.map((p) => (
-                <th key={p.id} className="p-4 font-semibold text-gray-900">
-                  {p.title}
+                <th key={p.id}>
+                  <Link href={`/products/${p.id}`} className="nm">
+                    {p.name}
+                  </Link>
+                  <div style={{ marginTop: 6 }}>
+                    <button
+                      type="button"
+                      className="mini"
+                      onClick={() => handleRemove(p.id)}
+                    >
+                      Quitar
+                    </button>
+                  </div>
                 </th>
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y">
-            <tr>
-              <td className="p-4 font-medium text-gray-600">Precio (COP)</td>
-              {products.map((p) => (
-                <td key={p.id} className="p-4 font-bold text-gray-900">
-                  {formatCop(p.price_cop)}
-                </td>
-              ))}
-            </tr>
-            <tr>
-              <td className="p-4 font-medium text-gray-600">Marca</td>
-              {products.map((p) => (
-                <td key={p.id} className="p-4">
-                  {p.brand}
-                </td>
-              ))}
-            </tr>
-            <tr>
-              <td className="p-4 font-medium text-gray-600">Tienda</td>
-              {products.map((p) => (
-                <td key={p.id} className="p-4">
-                  {p.store_name}
-                </td>
-              ))}
-            </tr>
-            <tr>
-              <td className="p-4 font-medium text-gray-600">Color</td>
-              {products.map((p) => (
-                <td key={p.id} className="p-4">
-                  {p.color}
-                </td>
-              ))}
-            </tr>
-            <tr>
-              <td className="p-4 font-medium text-gray-600">Tallas</td>
-              {products.map((p) => (
-                <td key={p.id} className="p-4">
-                  {p.sizes?.map((s) => s.size).join(', ') || 'N/A'}
-                </td>
-              ))}
-            </tr>
-            <tr>
-              <td className="p-4 font-medium text-gray-600">Enlace</td>
-              {products.map((p) => (
-                <td key={p.id} className="p-4">
-                  <a
-                    href={p.product_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-indigo-600 hover:underline"
-                  >
-                    Ver en tienda ↗
-                  </a>
-                </td>
-              ))}
-            </tr>
+          <tbody>
+            {row('Foto', (p) => {
+              const primary =
+                p.images.find((i) => i.isPrimary)?.url ??
+                p.images[0]?.url ??
+                null;
+              return (
+                <span className="cmpimg">
+                  <ProductImage
+                    src={primary}
+                    name={p.name}
+                    category={p.category}
+                    color={p.color}
+                  />
+                </span>
+              );
+            })}
+            {row(
+              'Precio',
+              (p) =>
+                formatCOP(p.priceCop) +
+                (p.priceCop === minPrice ? ' (más bajo)' : ''),
+              true,
+            )}
+            {row('Tienda', (p) => p.store?.name || '—')}
+            {row('Marca', (p) => p.brand || '—')}
+            {row('Color', (p) => colorLabel(p.color))}
+            {row('Material', (p) => p.material || '—')}
+            {row('Estado', (p) => (p.isSecondHand ? 'Segunda mano' : 'Nuevo'))}
+            {row(
+              'Tallas disponibles',
+              (p) =>
+                p.sizes
+                  .filter((z) => z.isAvailable)
+                  .map((z) => z.size)
+                  .join(', ') || '—',
+            )}
+            {row('Actualizado', (p) => formatUpdatedAt(p.lastPriceUpdate))}
+            {row('Tienda en línea', (p) => (
+              <a
+                href={p.externalUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mini"
+              >
+                Ver en tienda ↗
+              </a>
+            ))}
+            {row('', (p) => (
+              <button
+                type="button"
+                className="mini pri"
+                onClick={() => add(productDetailToOutfitItem(p))}
+              >
+                Agregar al outfit
+              </button>
+            ))}
           </tbody>
         </table>
       </div>
-    </div>
+
+      <p className="mut small" style={{ marginTop: 10 }}>
+        Material y calificación se muestran cuando las tiendas entregan esos datos.
+      </p>
+    </section>
   );
 }

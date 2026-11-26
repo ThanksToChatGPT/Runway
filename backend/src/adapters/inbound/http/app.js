@@ -12,6 +12,7 @@ import { createOutfitController } from './controllers/outfitController.js';
 import { createAdminStoreController } from './controllers/adminStoreController.js';
 import { createAuthRoutes } from './routes/authRoutes.js';
 import { createCatalogRoutes } from './routes/catalogRoutes.js';
+import { createStoreRoutes } from './routes/storeRoutes.js';
 import { createOutfitRoutes } from './routes/outfitRoutes.js';
 import { createAdminStoreRoutes } from './routes/adminStoreRoutes.js';
 
@@ -83,11 +84,13 @@ export function createHttpApp({
     publicLimiter,
     loginLimiter,
   });
+  const catalogController = createCatalogController(catalogService);
   app.use('/api/auth', auth);
   app.use('/api/preferences', preferences);
+  app.use('/api/stores', createStoreRoutes({ controller: catalogController, publicLimiter }));
   app.use(
     '/api/products',
-    createCatalogRoutes({ controller: createCatalogController(catalogService), optionalAuthenticate, publicLimiter }),
+    createCatalogRoutes({ controller: catalogController, optionalAuthenticate, publicLimiter }),
   );
   app.use('/api/outfits', createOutfitRoutes({ controller: createOutfitController(outfitService), authenticate }));
   app.use(
