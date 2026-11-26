@@ -14,9 +14,9 @@ build/
 coverage/
 
 # Python
-    __pycache__/
-    *.pyc
-    .venv/
+__pycache__/
+*.pyc
+.venv/
 
 # Logs y archivos del sistema
 *.log
