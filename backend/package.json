@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test \"src/tests/**/*.test.js\""
+    "test": "node --test \"src/tests/**/*.test.js\"",
+    "test:core": "node --test \"src/tests/{domain,ports,services}/*.test.js\"",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=\"src/core/**\" --test-coverage-exclude=\"src/core/services/{authService,adminService,catalogService,outfitService}.js\" --test-coverage-exclude=\"src/core/domain/{outfit,preferences,user}.js\" \"src/tests/{domain,ports,services}/*.test.js\""
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

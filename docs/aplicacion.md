@@ -12,33 +12,60 @@ El catálogo se llena automáticamente con productos de distintas tiendas. Como 
 escribe los datos a su manera, la aplicación los ordena para que todo se vea igual
 (mismos nombres de colores, tallas y categorías).
 
-## Estado actual
+---
 
-| Fase | Qué incluye | Estado |
-|------|-------------|--------|
-| 1. Núcleo del negocio (dominio) | Las reglas principales: usuarios, preferencias, tiendas, productos, outfits y limpieza del catálogo | ✅ Terminada |
-| 2. Puertos | Los "contratos": qué ofrece el núcleo (entrantes) y qué necesita del mundo exterior (salientes) | ✅ Terminada |
-| 3. Casos de uso | Las acciones completas (registrarse, guardar un outfit, buscar prendas…) | ⏳ Pendiente |
-| 4. Adaptadores | Base de datos, API web y conexión con el scraper | ⏳ Pendiente |
+## Arquitectura
 
-## Cómo está organizado el código
+El backend sigue la **arquitectura hexagonal (puertos y adaptadores)**. En el centro está el
+**núcleo** (`backend/src/core/`), que contiene las reglas del negocio y no conoce Express,
+PostgreSQL, bcrypt, JWT ni el scraper. Todo lo externo se conecta al núcleo a través de contratos.
 
 ```
-backend/src/
-├── core/
-│   ├── domain/              ← Fase 1: el corazón de la aplicación
-│   │   ├── constants.js     ← listas fijas (roles, secciones del outfit, categorías)
-│   │   ├── errors.js        ← los tipos de error y sus mensajes
-│   │   ├── guards.js        ← validaciones pequeñas que se reutilizan
-│   │   ├── entities/        ← las "piezas" del negocio
-│   │   └── rules/           ← reglas que no pertenecen a una sola pieza
-│   └── ports/               ← Fase 2: contratos (ver sección "Fase 2")
-│       ├── inbound/         ← lo que el núcleo ofrece a la API
-│       └── outbound/        ← lo que el núcleo necesita de afuera
-└── tests/
-    ├── domain/              ← pruebas del núcleo
-    └── ports/               ← pruebas de los contratos y DTOs
+   API web (Express)                                  Base de datos, JWT, bcrypt, scraper
+          │                                                          ▲
+          ▼                                                          │
+  Contratos de entrada ──► Casos de uso ──► Dominio      Contratos de salida
+   (lo que el núcleo        (servicios)    (entidades     (lo que el núcleo
+    ofrece)                                  y reglas)      necesita de afuera)
 ```
+
+| Capa | Qué es | Carpeta |
+|------|--------|---------|
+| **Dominio** | Las piezas del negocio y sus reglas. | `core/domain/` |
+| **Contratos (puertos)** | Qué ofrece el núcleo y qué necesita, sin decir cómo se hace. | `core/ports/` |
+| **Casos de uso (servicios)** | Las acciones completas: registrarse, buscar prendas, guardar un outfit… | `core/services/` |
+| **Adaptadores** | Las piezas concretas: Express, PostgreSQL, JWT, bcrypt, cliente del scraper. Todavía no están conectadas al núcleo. | `adapters/` |
+
+### Cómo está organizado el código
+
+```
+backend/src/core/
+├── domain/
+│   ├── constants.js          ← listas fijas (roles, secciones del outfit, categorías)
+│   ├── errors.js             ← los tipos de error y sus mensajes en español
+│   ├── guards.js             ← validaciones pequeñas que se reutilizan
+│   ├── entities/             ← las piezas del negocio
+│   └── rules/                ← reglas que no pertenecen a una sola pieza
+├── ports/
+│   ├── contract.js           ← notImplemented() y assertImplements()
+│   ├── catalogQuery.js       ← orden por precio, paginación y límites de comparación
+│   ├── inbound/              ← contratos de entrada + DTOs
+│   └── outbound/             ← contratos de salida (repositorios, seguridad, scraper)
+└── services/
+    ├── applicationGuards.js  ← validaciones comunes (sesión, rol admin, existe / no existe)
+    ├── AuthAndUserService.js
+    ├── AdminStoreService.js
+    ├── CatalogSearchService.js
+    └── OutfitBuilderService.js
+```
+
+> Los archivos en minúscula de `services/` (`authService.js`, `adminService.js`, `catalogService.js`,
+> `outfitService.js`) son el prototipo anterior. La app actual todavía los usa y se eliminarán
+> cuando los adaptadores se conecten a los servicios nuevos.
+
+---
+
+## Dominio
 
 ### Las piezas del negocio (entidades)
 
@@ -53,144 +80,53 @@ backend/src/
 | **Outfit** | La combinación de prendas, con su precio total y el aviso de presupuesto. |
 | **OutfitSlot** | Cada sección del outfit: parte superior, parte inferior o calzado. |
 
-### Reglas importantes que ya funcionan
+### Reglas del negocio
 
 - Los precios y presupuestos nunca pueden ser negativos.
 - El precio mínimo no puede ser mayor que el máximo.
 - El total del outfit es la suma de los precios de sus prendas.
 - Pasarse del presupuesto **solo muestra un aviso**: no impide armar ni guardar el outfit.
 - Una prenda solo puede ir en su sección (unos zapatos no pueden ir en "parte superior").
-- No se puede guardar un outfit vacío.
+- No se puede guardar un outfit vacío ni sin nombre.
 - Los colores, tallas y categorías de todas las tiendas se unifican ("Negro", "BLK" → `black`; "Mediana" → `M`).
 - Se excluyen productos de contenido sexual explícito, sin afectar ropa normal como ropa interior o vestidos de baño.
+- Una persona solo puede ver sus propios outfits.
+- Solo un administrador puede gestionar tiendas y actualizar el catálogo.
 
-### Cómo correr las pruebas
+### Errores
 
-```bash
-cd backend
-npm install
-npm test
-```
+Todos los errores tienen un mensaje en español listo para mostrar. El núcleo no conoce
+códigos HTTP: la API traduce cada tipo a su código.
 
----
-
-## Patrones de diseño
-
-Aquí están solo los patrones agrupados según su origen.
-Cada fila dice qué problema resuelve y dónde verlo. Rutas relativas a `backend/src/core/domain/`.
-
-### Patrón de arquitectura
-
-| Patrón | Qué resuelve | Dónde |
-|--------|--------------|-------|
-| **Hexagonal (Puertos y Adaptadores)** | Que las reglas del negocio no dependan de la base de datos, del servidor web ni del scraper. Se pueden cambiar esas piezas sin tocar el centro. | Toda la carpeta `domain/`: no importa nada externo. Los puertos están en `core/ports/` (fase 2); los adaptadores llegan en la fase 4. |
-
-### Patrones creacionales (GoF)
-
-| Patrón | Qué resuelve | Dónde |
-|--------|--------------|-------|
-| **Factory Method** (versión estática) | Crear un objeto listo y válido con una sola llamada, sin tener que armarlo a mano. | `Outfit.createEmpty(userId)` → outfit con sus 3 secciones vacías.<br>`UserPreference.createDefault(userId)` → preferencias sin límites. |
-
-### Patrones de diseño guiado por el dominio (DDD)
-
-| Patrón | Qué resuelve | Dónde |
-|--------|--------------|-------|
-| **Entity** (Entidad) | Representar algo del negocio que tiene identidad propia (`id`) y cambia con el tiempo. | Las 8 clases de `entities/`. |
-| **Aggregate** (Agregado) | Un objeto "jefe" controla a sus partes internas, para que nunca queden en un estado incoherente. | `Outfit` controla sus `OutfitSlot` (siempre hay 3, una por sección). `Product` controla sus `ProductImage` (máximo una principal) y sus `ProductSizeStock`. |
-| **Rich Domain Model** (Modelo rico) | Evitar objetos que solo guardan datos: cada uno valida sus datos y hace sus propios cálculos. | `Outfit.calculateTotalPrice()`, `Outfit.evaluateBudget()`, `UserPreference.update()`, `Store.activate()`. |
-| **Domain Service** (Servicio de dominio) | Ubicar reglas que aplican a muchos objetos y no pertenecen a uno solo. | `rules/catalogStandardizer.js`: unifica colores, tallas y categorías, y filtra contenido restringido. |
-
-### Patrones de asignación de responsabilidades (GRASP)
-
-| Patrón | Qué resuelve | Dónde |
-|--------|--------------|-------|
-| **Information Expert** (Experto) | Darle cada tarea a quien ya tiene los datos para hacerla. | `Outfit` calcula su total porque conoce sus prendas. `Product.getAvailableSizes()`. `UserPreference.isPriceInRange()`. |
-| **Creator** (Creador) | Decidir quién crea cada objeto: quien lo contiene. | `Outfit` crea sus `OutfitSlot`. `Product` crea sus `ProductImage` y `ProductSizeStock` a partir de datos simples. |
-| **Pure Fabrication** (Fabricación pura) | Crear un módulo que no es un concepto del negocio, para no ensuciar las entidades con tareas ajenas. | `rules/catalogStandardizer.js` y `guards.js`. |
-| **Protected Variations** (Variaciones protegidas) | Proteger el núcleo de cosas que pueden cambiar (base de datos, tiendas, framework). | Es el objetivo de la arquitectura hexagonal: `domain/` no conoce Express, PostgreSQL ni el scraper. |
-
+| Error | Cuándo ocurre |
+|-------|---------------|
+| `ValidationError` | Datos que no cumplen una regla (precio negativo, prenda en la sección equivocada…). |
+| `UnauthorizedError` | No hay sesión, o el correo o la contraseña no son correctos. |
+| `ForbiddenError` | Hay sesión, pero la persona no tiene permiso (p. ej. no es administradora). |
+| `NotFoundError` | No existe, está oculto o pertenece a otra persona. |
+| `ConflictError` | Choca con algo existente (p. ej. un correo ya registrado). |
 
 ---
 
-## Fase 2 — Puertos (`backend/src/core/ports/`)
+## Contratos (puertos)
 
-Un **puerto** es un contrato: una clase cuyos métodos dicen *qué* se hace, pero no *cómo*.
-Cada método base lanza "no implementado"; la implementación real la ponen los servicios
-(fase 3) o los adaptadores (fase 4). Los puertos solo importan cosas de `core/`:
-nada de Express, PostgreSQL, bcrypt ni `fetch` (hay un test que lo verifica).
+Un **contrato** es una clase cuyos métodos dicen *qué* se hace, pero no *cómo*. Cada método
+base lanza "no implementado". Los casos de uso implementan los contratos de entrada y los
+adaptadores implementan los de salida.
 
-```
-core/ports/
-├── index.js               ← exporta todo
-├── contract.js            ← notImplemented() y assertImplements()
-├── catalogQuery.js        ← PRICE_SORT, PAGINATION, MIN/MAX_COMPARE_ITEMS, tipo Page
-├── inbound/               ← lo que el núcleo OFRECE (los usa el adaptador HTTP)
-│   ├── AuthAndUserPort.js
-│   ├── CatalogSearchPort.js
-│   ├── OutfitBuilderPort.js
-│   ├── AdminStorePort.js
-│   └── dtos/              ← tipos de entrada/salida + funciones toXxxDto()
-│       ├── authDtos.js   catalogDtos.js   outfitDtos.js   adminDtos.js
-└── outbound/              ← lo que el núcleo NECESITA (lo implementan los adaptadores)
-    ├── repositories/      ← UserRepository, PreferenceRepository, StoreRepository,
-    │                        ProductRepository, OutfitRepository
-    ├── security/          ← PasswordHasher, TokenService
-    └── extraction/        ← ScraperPort
-```
+### Contratos de entrada (lo que el núcleo ofrece)
 
-> Los archivos sueltos `ports/inbound.js` y `ports/outbound.js` del prototipo anterior se
-> eliminaron: los reemplazan estas carpetas. Los servicios viejos de `core/services/` siguen
-> ahí sin cambios y se reescribirán en la fase 3 sobre estos contratos.
+Todos los métodos son `async` y reciben **un solo objeto**.
 
-### Cómo se implementa un puerto
-
-```js
-import { PasswordHasher, assertImplements } from '../core/ports/index.js';
-
-// Opción A: extender la clase
-class BcryptPasswordHasher extends PasswordHasher {
-  async hash(plain) { /* bcrypt.hash(plain, 12) */ }
-  async compare(plain, hash) { /* bcrypt.compare(plain, hash) */ }
-}
-
-// Opción B: objeto plano con los mismos métodos (útil para mocks en tests)
-const fakeHasher = { hash: async (p) => `h:${p}`, compare: async (p, h) => h === `h:${p}` };
-
-// En index.js: falla al arrancar si falta un método
-assertImplements(new BcryptPasswordHasher(), PasswordHasher);
-```
-
-### Patrones aplicados en esta fase
-
-| Patrón | Qué resuelve | Dónde verlo |
-|--------|--------------|-------------|
-| **Repository** | El núcleo guarda y busca entidades sin saber que existe SQL. Los repositorios reciben y devuelven entidades del dominio (`User`, `Outfit`…), nunca filas. | `outbound/repositories/*`. Ej.: `outfitRepository.findByIdForUser(outfitId, userId)` → `Outfit \| null`. |
-| **Strategy / Inversión de dependencias** | Cambiar bcrypt por Argon2id, o JWT por un mock, sin tocar el núcleo: el servicio recibe "algo que cumple `PasswordHasher`". | `outbound/security/*` y `outbound/extraction/ScraperPort.js`. |
-| **DTO** | La API recibe y devuelve objetos planos y estables, distintos de las entidades. Así nunca sale un `passwordHash` y la forma del JSON no cambia si cambia una entidad. | `inbound/dtos/*`: tipos `XxxInput` / `XxxDto` y funciones `toUserDto`, `toProductDetailDto`, `toOutfitDto`, `toStoreDto`… |
-| **Facade / Interfaz de casos de uso** | La capa HTTP ve solo 4 puertas de entrada, cada una con las operaciones de un tema. | `inbound/*Port.js`. |
-
-Ejemplo de DTO (el servicio calcula, el mapper da forma):
-
-```js
-const budget = outfit.evaluateBudget(preference?.maxOutfitBudget ?? null);
-return toOutfitDto(outfit, { budget, storesById });
-// → { id, isSaved, name, slots: [{ slotType, label, piece }], totalCostCop, currency: 'COP',
-//     budget: { maxBudget, isOverBudget, differenceCop }, createdAt }
-```
-
-### Mapa de contratos
-
-**Puertos entrantes.** Todos los métodos son `async` y reciben **un solo objeto** de entrada.
-
-| Puerto | Método | Entrada | Salida |
-|--------|--------|---------|--------|
+| Contrato | Método | Entrada | Salida |
+|----------|--------|---------|--------|
 | `AuthAndUserPort` | `register` | `{ email, password, name, country? }` | `AuthSessionDto` |
 | | `login` | `{ email, password }` | `AuthSessionDto` |
-| | `logout` | `{ accessToken }` | `void` |
+| | `logout` | `{ accessToken }` | nada |
 | | `verifySession` | `{ accessToken }` | `{ userId, role }` |
 | | `getPreferencesSummary` | `{ userId }` | `PreferencesSummaryDto` |
 | | `updatePreferences` | `{ userId, minPrice?, maxPrice?, maxOutfitBudget? }` | `PreferencesSummaryDto` |
-| `CatalogSearchPort` | `searchProducts` | `SearchProductsInput` (texto, precio, marcas, colores, tallas, categorías, tiendas incluidas/excluidas, `sort`, `page`, `pageSize`, `usePreferredPriceRange`) | `ProductPageDto` |
+| `CatalogSearchPort` | `searchProducts` | texto, precio, marcas, colores, tallas, categorías, tiendas, `sort`, `page`, `pageSize`, `usePreferredPriceRange` | `ProductPageDto` |
 | | `getProductDetail` | `{ productId }` | `ProductDetailDto` |
 | | `compareProducts` | `{ productIds }` (2 a 4) | `{ products: ProductDetailDto[] }` |
 | `OutfitBuilderPort` | `startEmptyOutfit` | `{ userId, name? }` | `OutfitDto` (borrador) |
@@ -204,16 +140,120 @@ return toOutfitDto(outfit, { budget, storesById });
 | | `listStores` | `{ actor }` | `StoreDto[]` |
 | | `runStoreScraping` | `{ actor, storeId }` | `ScrapingResultDto` |
 
-**Puertos salientes.**
+### Contratos de salida (lo que el núcleo necesita de afuera)
 
-| Puerto | Métodos |
-|--------|---------|
+Reciben y devuelven entidades del dominio, nunca filas de la base de datos.
+
+| Contrato | Métodos |
+|----------|---------|
 | `UserRepository` | `findByEmail(email)`, `findById(id)`, `create(user)` |
 | `PreferenceRepository` | `findByUserId(userId)`, `upsert(preference)` |
 | `StoreRepository` | `findAll({ onlyActive? })`, `findById(id)`, `create(store)`, `update(store)`, `setActive(id, isActive)` |
-| `ProductRepository` | `search(criteria)` → `Page<Product>`, `findById(id)`, `findByIds(ids)`, `upsertMany(storeId, products)` → `{ inserted, updated }` |
+| `ProductRepository` | `search(criteria)` → página de productos, `findById(id)`, `findByIds(ids)`, `upsertMany(storeId, products)` → `{ inserted, updated }` |
 | `OutfitRepository` | `create(outfit)`, `findByUserId(userId)`, `findByIdForUser(outfitId, userId)` |
 | `PasswordHasher` | `hash(plain)` → `string`, `compare(plain, hash)` → `boolean` |
 | `TokenService` | `sign({ sub, role })` → `{ token, expiresInSeconds }`, `verify(token)` → `{ sub, role }`, `revoke(token)` |
-| `ScraperPort` | `extractProductsByStore(store)` → `RawScrapedProduct[]` (sin estandarizar) |
+| `ScraperPort` | `extractProductsByStore(store)` → productos crudos, sin estandarizar |
 
+### DTOs (lo que entra y sale del núcleo)
+
+La API recibe y devuelve objetos planos y estables, distintos de las entidades. Así nunca sale
+un `passwordHash` y la forma del JSON no cambia si cambia una entidad. Están en
+`ports/inbound/dtos/` junto con sus funciones de conversión (`toUserDto`, `toProductDetailDto`,
+`toOutfitDto`, `toStoreDto`…).
+
+Ejemplo de un outfit tal como sale del núcleo:
+
+```js
+{ id, isSaved, name,
+  slots: [{ slotType, label, piece: { productId, name, priceCop, externalUrl, store } }],
+  totalCostCop, currency: 'COP',
+  budget: { maxBudget, isOverBudget, differenceCop },
+  createdAt }
+```
+
+---
+
+## Casos de uso (servicios)
+
+Cada servicio implementa un contrato de entrada: valida quién hace la petición, usa las
+entidades del dominio para aplicar las reglas y guarda o consulta datos mediante los contratos
+de salida. No sabe nada de HTTP ni de SQL.
+
+| Servicio | Usa | Qué hace |
+|----------|-----|----------|
+| **AuthAndUserService** | `UserRepository`, `PreferenceRepository`, `PasswordHasher`, `TokenService` | **Registro**: el correo no puede estar repetido y la contraseña debe tener de 8 a 72 caracteres, con al menos una letra y un número. Se guarda hasheada y el usuario siempre queda con rol `user`. **Login**: el mismo mensaje si falla el correo o la contraseña. **Logout**: invalida el token. **Preferencias**: solo cambia los campos enviados. |
+| **AdminStoreService** | `StoreRepository`, `ProductRepository`, `ScraperPort` | Solo para administradores. Crea, edita, activa/desactiva y lista tiendas. **Actualizar catálogo**: pide los productos de una tienda activa al scraper, unifica colores, tallas y categorías, descarta el contenido restringido y los datos inválidos, y guarda todo en lote. Si el scraper falla, responde `status: 'failed'` sin tocar el catálogo. |
+| **CatalogSearchService** | `ProductRepository`, `StoreRepository`, `PreferenceRepository` | **Búsqueda**: filtros combinados, orden por precio y páginas de máximo 50 productos; puede usar el rango de precios guardado. **Detalle**: galería, tallas disponibles y agotadas, tienda y enlace. **Comparar**: de 2 a 4 productos lado a lado. Los productos ocultos nunca se muestran. |
+| **OutfitBuilderService** | `ProductRepository`, `OutfitRepository`, `PreferenceRepository`, `StoreRepository` | El outfit en construcción vive en el navegador: en cada cambio el servicio lo vuelve a armar, recalcula el total en COP y revisa el presupuesto. **Guardar** exige nombre y al menos una prenda. **Mis outfits** muestra tienda, precio y enlace de compra de cada prenda. |
+
+Ejemplo del recorrido al guardar un outfit:
+
+```
+API → OutfitBuilderService.saveOutfit({ userId, name, pieces })
+  ├─ ¿hay sesión? ¿tiene nombre?                         ← validaciones iniciales
+  ├─ productRepository.findByIds(...)                    ← contrato de salida
+  ├─ Outfit.createEmpty() → addOrReplacePiece() → evaluateBudget()   ← dominio
+  ├─ outfitRepository.create(outfit)                     ← contrato de salida
+  └─ toOutfitDto(...)                                    ← DTO de salida
+```
+
+Cada servicio recibe lo que necesita al crearse, así que se le puede pasar cualquier
+implementación que cumpla los contratos:
+
+```js
+const auth = new AuthAndUserService({
+  userRepository,        // p. ej. la versión con PostgreSQL
+  preferenceRepository,
+  passwordHasher,        // p. ej. bcrypt
+  tokenService,          // p. ej. JWT
+});
+```
+
+---
+
+## Patrones de diseño
+
+Cada fila dice qué problema resuelve y dónde verlo. Rutas relativas a `backend/src/core/`.
+
+### Arquitectura
+
+| Patrón | Qué resuelve | Dónde |
+|--------|--------------|-------|
+| **Hexagonal (Puertos y Adaptadores)** | Que las reglas del negocio no dependan de la base de datos, del servidor web ni del scraper. Se pueden cambiar esas piezas sin tocar el centro. | Todo `core/`: no importa Express, PostgreSQL, clientes HTTP ni lee variables de entorno. |
+| **Service Layer / Caso de uso** | Cada acción del usuario está en un solo método que coordina dominio y contratos. La API no tiene lógica de negocio. | `services/*Service.js`. Cada clase extiende su contrato: `class OutfitBuilderService extends OutfitBuilderPort`. |
+| **Facade** | La API ve solo 4 puertas de entrada, cada una con las operaciones de un tema. | `ports/inbound/*Port.js`. |
+
+### Creacionales (GoF)
+
+| Patrón | Qué resuelve | Dónde |
+|--------|--------------|-------|
+| **Factory Method** (versión estática) | Crear un objeto listo y válido con una sola llamada. | `Outfit.createEmpty(userId)` → outfit con sus 3 secciones vacías.<br>`UserPreference.createDefault(userId)` → preferencias sin límites. |
+
+### Diseño guiado por el dominio (DDD)
+
+| Patrón | Qué resuelve | Dónde |
+|--------|--------------|-------|
+| **Entity** (Entidad) | Representar algo del negocio que tiene identidad propia (`id`) y cambia con el tiempo. | Las 8 clases de `domain/entities/`. |
+| **Aggregate** (Agregado) | Un objeto "jefe" controla a sus partes internas para que nunca queden en un estado incoherente. | `Outfit` controla sus `OutfitSlot` (siempre 3). `Product` controla sus `ProductImage` (máximo una principal) y sus `ProductSizeStock`. |
+| **Rich Domain Model** (Modelo rico) | Cada objeto valida sus datos y hace sus propios cálculos, en vez de solo guardar datos. | `Outfit.calculateTotalPrice()`, `Outfit.evaluateBudget()`, `UserPreference.update()`, `Store.activate()`. |
+| **Domain Service** (Servicio de dominio) | Ubicar reglas que aplican a muchos objetos y no pertenecen a uno solo. | `domain/rules/catalogStandardizer.js`. |
+| **Repository** | El núcleo guarda y busca entidades sin saber que existe SQL. | `ports/outbound/repositories/*`. Ej.: `findByIdForUser(outfitId, userId)` → `Outfit` o `null`. |
+| **DTO** | Separar lo que entra y sale del núcleo de las entidades internas. | `ports/inbound/dtos/*`. |
+
+### Comportamiento y dependencias
+
+| Patrón | Qué resuelve | Dónde |
+|--------|--------------|-------|
+| **Strategy / Inversión de dependencias** | Cambiar bcrypt por Argon2id, o JWT por otra cosa, sin tocar el núcleo: el servicio recibe "algo que cumple `PasswordHasher`". | `ports/outbound/security/*` y `ports/outbound/extraction/ScraperPort.js`. |
+| **Inyección de dependencias por constructor** | Cada servicio recibe sus repositorios y servicios externos al crearse, así se pueden cambiar sin modificar su código. | El `constructor({ ... })` de cada clase en `services/`. |
+| **Guard Clauses (Fail-Fast)** | Validar primero (sesión, rol, propiedad, existencia) y cortar con un error claro en español antes de tocar datos. | `services/applicationGuards.js` (`requireAuthenticatedUser`, `requireAdmin`, `requireFound`) y el inicio de cada método de los servicios. |
+
+### Asignación de responsabilidades (GRASP)
+
+| Patrón | Qué resuelve | Dónde |
+|--------|--------------|-------|
+| **Information Expert** (Experto) | Darle cada tarea a quien ya tiene los datos para hacerla. | `Outfit` calcula su total porque conoce sus prendas. `Product.getAvailableSizes()`. `UserPreference.isPriceInRange()`. |
+| **Creator** (Creador) | Decidir quién crea cada objeto: quien lo contiene. | `Outfit` crea sus `OutfitSlot`. `Product` crea sus `ProductImage` y `ProductSizeStock`. |
+| **Pure Fabrication** (Fabricación pura) | Crear un módulo que no es un concepto del negocio para no ensuciar las entidades. | `domain/rules/catalogStandardizer.js`, `domain/guards.js` y `services/applicationGuards.js`. |
+| **Protected Variations** (Variaciones protegidas) | Proteger el núcleo de lo que puede cambiar (base de datos, tiendas, framework). | Los contratos de `ports/`: el núcleo depende de ellos, no de las herramientas concretas. |
