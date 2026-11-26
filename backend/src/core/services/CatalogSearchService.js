@@ -121,6 +121,7 @@ function buildCriteria(input) {
 
   return {
     text,
+    ids: toList(input.ids),
     minPrice,
     maxPrice,
     brands: toList(input.brands),

@@ -110,6 +110,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export interface SearchProductsParams {
   q?: string;
+  ids?: string[];
   minPrice?: number;
   maxPrice?: number;
   brand?: string[];
@@ -128,6 +129,7 @@ export interface SearchProductsParams {
 function buildSearchQuery(params: SearchProductsParams): string {
   const qs = new URLSearchParams();
   if (params.q?.trim()) qs.set('q', params.q.trim());
+  if (params.ids?.length) qs.set('ids', params.ids.join(','));
   if (params.minPrice !== undefined) qs.set('minPrice', String(params.minPrice));
   if (params.maxPrice !== undefined) qs.set('maxPrice', String(params.maxPrice));
   if (params.brand?.length) qs.set('brand', params.brand.join(','));

@@ -41,37 +41,8 @@ import type {
   Outfit,
   OutfitBudget,
   OutfitItem,
-  PriceSort,
   User,
 } from '@/types';
-
-export interface CatalogFilters {
-  q: string;
-  category: Category | '';
-  sort: PriceSort | '';
-  includeStores: string[];
-  excludeStores: string[];
-  colors: string[];
-  sizes: string[];
-  brands: string[];
-  minPrice: string;
-  maxPrice: number | null;
-  usePreferences: boolean;
-}
-
-export const DEFAULT_FILTERS: CatalogFilters = {
-  q: '',
-  category: '',
-  sort: '',
-  includeStores: [],
-  excludeStores: [],
-  colors: [],
-  sizes: [],
-  brands: [],
-  minPrice: '',
-  maxPrice: null,
-  usePreferences: false,
-};
 
 const FAV_KEY = 'ob_favs';
 const CMP_KEY = 'ob_compare_ids';
@@ -90,8 +61,6 @@ function readJson<T>(key: string, fallback: T): T {
 interface AppContextValue {
   user: User | null;
   hydrated: boolean;
-  filters: CatalogFilters;
-  setFilters: React.Dispatch<React.SetStateAction<CatalogFilters>>;
   budget: number | null;
   setBudget: (value: number | null) => void;
   serverBudget: OutfitBudget | null;
@@ -138,7 +107,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [favs, setFavs] = useState<string[]>([]);
   const [budget, setBudgetState] = useState<number | null>(null);
   const [serverBudget, setServerBudget] = useState<OutfitBudget | null>(null);
-  const [filters, setFilters] = useState<CatalogFilters>(DEFAULT_FILTERS);
   const [msg, setMsg] = useState('');
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const histRef = useRef(hist);
@@ -150,30 +118,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     toastTimer.current = setTimeout(() => setMsg(''), 3200);
   }, []);
 
-  const clearExpiredSession = useCallback(
-    (notify = false) => {
-      clearAuthSession();
-      setUser(null);
-      setBudgetState(null);
-      setServerBudget(null);
-      if (notify) {
-        toast('Tu sesión expiró. Inicia sesión de nuevo.');
-      }
-    },
-    [toast],
-  );
+  const resetSessionState = useCallback(() => {
+    clearAuthSession();
+    setUser(null);
+    setBudgetState(null);
+    setServerBudget(null);
+  }, []);
 
   const refreshPreferences = useCallback(async () => {
     if (!getStoredToken()) return;
     try {
       const prefs = await api.getPreferences();
       setBudgetState(prefs.maxOutfitBudget);
+      setServerBudget(null);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        clearExpiredSession(false);
+        resetSessionState();
       }
     }
-  }, [clearExpiredSession]);
+  }, [resetSessionState]);
 
   useEffect(() => {
     const storedUser = getStoredUser();
@@ -186,17 +149,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     if (storedUser && storedToken) {
       setUser(storedUser);
-      api
-        .getPreferences()
-        .then((prefs) => setBudgetState(prefs.maxOutfitBudget))
-        .catch((err) => {
-          if (err instanceof ApiError && err.status === 401) {
-            clearExpiredSession(false);
-          }
-        });
+      refreshPreferences();
     }
     setHydrated(true);
-  }, [clearExpiredSession]);
+  }, [refreshPreferences]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -208,16 +164,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [hydrated, hist.present]);
 
   const runDraftAction = useCallback(
-    (fn: (current: OutfitDraft) => OutfitDraft, okMessage?: string): OutfitDraft | null => {
+    (fn: (current: OutfitDraft) => OutfitDraft, okMessage?: string): boolean => {
       try {
         const next = fn(histRef.current.present);
-        setHist((prev) => commit(prev, fn(prev.present)));
+        setHist((prev) => commit(prev, next));
         if (okMessage) toast(okMessage);
-        return next;
+        return true;
       } catch (err) {
         if (err instanceof LockedSlotError) {
           toast('Esa pieza está bloqueada. Desbloquéala para cambiarla.');
-          return null;
+          return false;
         }
         throw err;
       }
@@ -228,11 +184,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const add = useCallback(
     (item: OutfitItem) => {
       const prevDraft = histRef.current.present;
-      const next = runDraftAction(
+      const applied = runDraftAction(
         (current) => addPiece(current, item),
         `${item.name} agregada al outfit`,
       );
-      if (!next) return;
+      if (!applied) return;
 
       if (getStoredToken()) {
         api
@@ -247,12 +203,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
           .then((res) => setServerBudget(res.budget))
           .catch((err) => {
             if (err instanceof ApiError && err.status === 401) {
-              clearExpiredSession(true);
+              resetSessionState();
+              toast('Tu sesión expiró. Inicia sesión de nuevo.');
             }
           });
       }
     },
-    [clearExpiredSession, runDraftAction],
+    [resetSessionState, runDraftAction, toast],
   );
 
   const remove = useCallback(
@@ -364,20 +321,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch {
       // Si el token ya expiró, igual cerramos la sesión local.
     } finally {
-      clearAuthSession();
-      setUser(null);
-      setBudgetState(null);
-      setServerBudget(null);
-      setFilters((prev) => ({ ...prev, usePreferences: false }));
+      resetSessionState();
       toast('Sesión cerrada');
     }
-  }, [toast]);
+  }, [resetSessionState, toast]);
 
   const handleError = useCallback(
     (error: unknown, fallback = 'Ocurrió un error. Intenta de nuevo.') => {
       if (error instanceof ApiError) {
         if (error.status === 401) {
-          clearExpiredSession(true);
+          resetSessionState();
+          toast('Tu sesión expiró. Inicia sesión de nuevo.');
           return;
         }
         toast(error.message);
@@ -389,7 +343,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
       toast(fallback);
     },
-    [clearExpiredSession, toast],
+    [resetSessionState, toast],
   );
 
   return (
@@ -397,8 +351,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       value={{
         user,
         hydrated,
-        filters,
-        setFilters,
         budget,
         setBudget,
         serverBudget,

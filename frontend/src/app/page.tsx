@@ -1,10 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import FilterBar from '@/components/FilterBar';
+import { useEffect, useMemo, useState, type SetStateAction } from 'react';
+import FilterBar, {
+  DEFAULT_FILTERS,
+  type CatalogFilters,
+} from '@/components/FilterBar';
 import ProductCard from '@/components/ProductCard';
-import { DEFAULT_FILTERS, useApp } from '@/context/AppContext';
+import { useApp } from '@/context/AppContext';
 import { cheapestIds } from '@/domain/product';
 import { api } from '@/services/api';
 import type { CatalogFacets, ProductSummary, StoreRef } from '@/types';
@@ -20,7 +23,8 @@ const EMPTY_FACETS: CatalogFacets = {
 const PAGE_SIZE = 20;
 
 export default function CatalogPage() {
-  const { filters, setFilters, cmp, user, hydrated, handleError } = useApp();
+  const { cmp, user, hydrated, handleError } = useApp();
+  const [filters, setFilters] = useState<CatalogFilters>(DEFAULT_FILTERS);
   const [stores, setStores] = useState<StoreRef[]>([]);
   const [facets, setFacets] = useState<CatalogFacets>(EMPTY_FACETS);
   const [products, setProducts] = useState<ProductSummary[]>([]);
@@ -28,8 +32,11 @@ export default function CatalogPage() {
   const [totalItems, setTotalItems] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
-  const filterKey = JSON.stringify(filters);
-  const prevFilterKeyRef = useRef(filterKey);
+
+  function updateFilters(next: SetStateAction<CatalogFilters>) {
+    setFilters(next);
+    setPage(1);
+  }
 
   useEffect(() => {
     api
@@ -44,16 +51,6 @@ export default function CatalogPage() {
 
   useEffect(() => {
     if (!hydrated) return;
-
-    let targetPage = page;
-    if (prevFilterKeyRef.current !== filterKey) {
-      prevFilterKeyRef.current = filterKey;
-      if (page !== 1) {
-        setPage(1);
-        return;
-      }
-      targetPage = 1;
-    }
 
     let cancelled = false;
     const timer = setTimeout(() => {
@@ -85,7 +82,7 @@ export default function CatalogPage() {
               ? filters.maxPrice
               : undefined,
           usePreferences: usePrefs || undefined,
-          page: targetPage,
+          page,
           pageSize: PAGE_SIZE,
         })
         .then((res) => {
@@ -106,7 +103,7 @@ export default function CatalogPage() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [filterKey, filters, handleError, hydrated, page, user]);
+  }, [filters, handleError, hydrated, page, user]);
 
   const cheapest = useMemo(() => cheapestIds(products), [products]);
 
@@ -123,7 +120,13 @@ export default function CatalogPage() {
         )}
       </div>
 
-      <FilterBar stores={stores} facets={facets} />
+      <FilterBar
+        filters={filters}
+        onChange={updateFilters}
+        stores={stores}
+        facets={facets}
+        canUsePreferences={Boolean(user)}
+      />
 
       {loading ? (
         <p className="mut">Cargando catálogo…</p>
@@ -136,7 +139,7 @@ export default function CatalogPage() {
             <button
               type="button"
               className="btn"
-              onClick={() => setFilters(DEFAULT_FILTERS)}
+              onClick={() => updateFilters(DEFAULT_FILTERS)}
             >
               Limpiar filtros
             </button>

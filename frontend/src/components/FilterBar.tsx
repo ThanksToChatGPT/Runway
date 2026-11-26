@@ -1,22 +1,53 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type SetStateAction } from 'react';
 import { formatCOP } from '@/domain/money';
 import { CATEGORIES, colorHex, colorLabel } from '@/domain/product';
-import {
-  DEFAULT_FILTERS,
-  useApp,
-  type CatalogFilters,
-} from '@/context/AppContext';
 import type { CatalogFacets, Category, PriceSort, StoreRef } from '@/types';
 
-interface FilterBarProps {
-  stores: StoreRef[];
-  facets: CatalogFacets;
+export interface CatalogFilters {
+  q: string;
+  category: Category | '';
+  sort: PriceSort | '';
+  includeStores: string[];
+  excludeStores: string[];
+  colors: string[];
+  sizes: string[];
+  brands: string[];
+  minPrice: string;
+  maxPrice: number | null;
+  usePreferences: boolean;
 }
 
-export default function FilterBar({ stores, facets }: FilterBarProps) {
-  const { filters: f, setFilters, user } = useApp();
+export const DEFAULT_FILTERS: CatalogFilters = {
+  q: '',
+  category: '',
+  sort: '',
+  includeStores: [],
+  excludeStores: [],
+  colors: [],
+  sizes: [],
+  brands: [],
+  minPrice: '',
+  maxPrice: null,
+  usePreferences: false,
+};
+
+interface FilterBarProps {
+  filters: CatalogFilters;
+  onChange: (next: SetStateAction<CatalogFilters>) => void;
+  stores: StoreRef[];
+  facets: CatalogFacets;
+  canUsePreferences: boolean;
+}
+
+export default function FilterBar({
+  filters: f,
+  onChange,
+  stores,
+  facets,
+  canUsePreferences,
+}: FilterBarProps) {
   const [storeMode, setStoreMode] = useState<'include' | 'exclude'>('include');
 
   const sliderMax = Math.max(
@@ -26,11 +57,11 @@ export default function FilterBar({ stores, facets }: FilterBarProps) {
   const currentMax = f.maxPrice ?? sliderMax;
 
   function patch(next: Partial<CatalogFilters>) {
-    setFilters((prev) => ({ ...prev, ...next }));
+    onChange((prev) => ({ ...prev, ...next }));
   }
 
   function toggleListValue(key: 'colors' | 'sizes' | 'brands', value: string) {
-    setFilters((prev) => {
+    onChange((prev) => {
       const list = prev[key];
       const next = list.includes(value)
         ? list.filter((item) => item !== value)
@@ -40,7 +71,7 @@ export default function FilterBar({ stores, facets }: FilterBarProps) {
   }
 
   function toggleStore(storeId: string) {
-    setFilters((prev) => {
+    onChange((prev) => {
       if (storeMode === 'include') {
         const exists = prev.includeStores.includes(storeId);
         return {
@@ -63,7 +94,7 @@ export default function FilterBar({ stores, facets }: FilterBarProps) {
   }
 
   function togglePreferences(checked: boolean) {
-    setFilters((prev) => ({
+    onChange((prev) => ({
       ...prev,
       usePreferences: checked,
       minPrice: checked ? '' : prev.minPrice,
@@ -247,7 +278,7 @@ export default function FilterBar({ stores, facets }: FilterBarProps) {
           </b>
         </label>
 
-        {user && (
+        {canUsePreferences && (
           <label className="row2" style={{ margin: 0, cursor: 'pointer' }}>
             <input
               type="checkbox"
@@ -263,7 +294,7 @@ export default function FilterBar({ stores, facets }: FilterBarProps) {
         <button
           type="button"
           className="btn"
-          onClick={() => setFilters(DEFAULT_FILTERS)}
+          onClick={() => onChange(DEFAULT_FILTERS)}
         >
           Limpiar filtros
         </button>

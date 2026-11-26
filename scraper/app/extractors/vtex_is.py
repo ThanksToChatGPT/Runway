@@ -72,11 +72,12 @@ class VtexIntelligentSearchExtractor(VtexExtractor):
     def _parse(self, p):
         raw = super()._parse(p)
         sizes, colors = dict(raw.sizes), list(raw.colors)
-        size_units = dict(raw.size_units)
         # Intelligent Search pone las opciones en items[].variations: [{"name": "Talla", "values": ["M"]}]
         for item in p.get("items", []):
-            qty = max([(s.get("commertialOffer", {}).get("AvailableQuantity", 0) or 0)
-                       for s in item.get("sellers", [])] or [0])
+            available = any(
+                (s.get("commertialOffer", {}).get("AvailableQuantity", 0) or 0) > 0
+                for s in item.get("sellers", [])
+            )
             for var in item.get("variations", []) or []:
                 if not isinstance(var, dict):
                     continue
@@ -85,9 +86,7 @@ class VtexIntelligentSearchExtractor(VtexExtractor):
                 name = var.get("name", "")
                 if _is(name, SIZE_WORDS):
                     for v in values:
-                        sizes[v] = sizes.get(v, False) or qty > 0
-                        if raw.units is not None:
-                            size_units[v] = size_units.get(v, 0) + qty
+                        sizes[v] = sizes.get(v, False) or available
                 elif _is(name, COLOR_WORDS):
                     colors += [v for v in values if v not in colors]
         for spec in p.get("skuSpecifications", []) or []:
@@ -102,7 +101,7 @@ class VtexIntelligentSearchExtractor(VtexExtractor):
         for prop in p.get("properties", []) or []:
             if _is(prop.get("name"), MATERIAL_WORDS) and not material:
                 material = " ".join(str(v) for v in prop.get("values", []))
-        raw.sizes, raw.colors, raw.material, raw.size_units = list(sizes.items()), colors, material, size_units
+        raw.sizes, raw.colors, raw.material = list(sizes.items()), colors, material
         # Intelligent Search también dice cuántas copias trae un pedido (unitMultiplier por ítem)
         mult = _max_multiplier(p.get("items", []), raw.unit_multiplier or 1.0)
         raw.unit_multiplier = mult if mult > 1 else None

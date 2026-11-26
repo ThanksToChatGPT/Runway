@@ -171,6 +171,10 @@ test('catálogo: búsqueda con filtros, detalle, comparación y 404', async () =
   const facetsRes = await call('GET', '/products/facets');
   assert.equal(facetsRes.status, 200);
   assert.deepEqual(facetsRes.body.priceRange, { min: 100000, max: 250000 });
+
+  const byIdsRes = await call('GET', `/products?ids=${shoes.id},inexistente`);
+  assert.equal(byIdsRes.status, 200);
+  assert.deepEqual(byIdsRes.body.items.map((p) => p.id), [shoes.id]);
 });
 
 test('outfit builder: borrador → piezas → guardar → listar → detalle', async () => {

@@ -14,6 +14,7 @@
  *
  * @typedef {Object} SearchProductsInput
  * @property {string} [text]
+ * @property {string[]} [ids]
  * @property {number} [minPrice]
  * @property {number} [maxPrice]
  * @property {string[]} [brands]

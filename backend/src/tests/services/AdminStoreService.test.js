@@ -171,6 +171,37 @@ test('si el scraper falla devuelve status failed y no toca el catálogo (RNF-13)
   assert.equal(store.lastScrapedAt, null);
 });
 
+test('runStoreScraping preserva tallas disponibles y agotadas en ProductSizeStock', async () => {
+  const scraper = new FakeScraper({
+    items: [
+      {
+        name: 'Camisa lino',
+        category: 'Camisas',
+        color: 'Blanco',
+        sizes: [
+          { size: 'Mediana', isAvailable: true },
+          { size: 'L', isAvailable: false },
+        ],
+        priceCop: 119900,
+        externalUrl: 'https://tienda.example.co/camisa-lino',
+      },
+    ],
+  });
+  const { service, productRepository, store } = await setup({ scraper });
+  const result = await service.runStoreScraping({ actor: ADMIN, storeId: store.id });
+  assert.equal(result.insertedCount, 1);
+
+  const [saved] = productRepository.all();
+  assert.deepEqual(
+    saved.sizeStocks.map((s) => ({ size: s.size, isAvailable: s.isAvailable })),
+    [
+      { size: 'M', isAvailable: true },
+      { size: 'L', isAvailable: false },
+    ],
+  );
+  assert.deepEqual(saved.getAvailableSizes(), ['M']);
+});
+
 test('una respuesta del scraper sin productos válidos termina bien sin escribir en el catálogo', async () => {
   const scraper = new FakeScraper({ items: [RAW_ITEMS[2], RAW_ITEMS[3]] });
   const { service, productRepository, store } = await setup({ scraper });

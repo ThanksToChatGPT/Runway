@@ -20,7 +20,7 @@ import { notImplemented } from '../../contract.js';
  * @property {boolean} [isSecondHand]       BR-14.
  * @property {string|null} [description]    solo se usa para filtrar contenido restringido.
  * @property {string[]} [imageUrls]         la primera se toma como principal.
- * @property {string[]} [sizes]             tallas disponibles, texto libre ("Mediana", "38,5"…).
+ * @property {Array<string|{ size: string, isAvailable?: boolean }>} [sizes] tallas con disponibilidad.
  */
 
 /**

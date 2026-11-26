@@ -12,6 +12,7 @@ export function createCatalogController(catalogService) {
       const q = req.query;
       const page = await catalogService.searchProducts({
         text: firstValue(q.q),
+        ids: toList(q.ids),
         minPrice: toNumber(q.minPrice),
         maxPrice: toNumber(q.maxPrice),
         brands: toList(q.brand),

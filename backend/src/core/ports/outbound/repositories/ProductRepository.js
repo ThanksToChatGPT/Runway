@@ -10,6 +10,7 @@ import { notImplemented } from '../../contract.js';
  *
  * @typedef {Object} ProductSearchCriteria
  * @property {string|null} [text]               texto libre (nombre, marca, subcategoría).
+ * @property {string[]} [ids]                   filtrar por lista de ids de productos.
  * @property {number|null} [minPrice]           COP, inclusive.
  * @property {number|null} [maxPrice]           COP, inclusive.
  * @property {string[]} [brands]                una o más marcas (US-21).

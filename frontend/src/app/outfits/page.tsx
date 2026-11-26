@@ -8,29 +8,7 @@ import { useApp } from '@/context/AppContext';
 import { formatCOP } from '@/domain/money';
 import { CATEGORIES, formatUpdatedAt } from '@/domain/product';
 import { api } from '@/services/api';
-import type { Outfit, ProductDetail, ProductSummary } from '@/types';
-
-function detailToSummary(detail: ProductDetail): ProductSummary {
-  const primary =
-    detail.images.find((i) => i.isPrimary)?.url ?? detail.images[0]?.url ?? null;
-  return {
-    id: detail.id,
-    name: detail.name,
-    brand: detail.brand,
-    category: detail.category,
-    subcategory: detail.subcategory,
-    color: detail.color,
-    priceCop: detail.priceCop,
-    currency: detail.currency,
-    isSecondHand: detail.isSecondHand,
-    primaryImageUrl: primary,
-    availableSizes: detail.sizes
-      .filter((s) => s.isAvailable)
-      .map((s) => s.size),
-    externalUrl: detail.externalUrl,
-    store: detail.store,
-  };
-}
+import type { Outfit, ProductSummary } from '@/types';
 
 export default function OutfitsPage() {
   const router = useRouter();
@@ -72,16 +50,13 @@ export default function OutfitsPage() {
     }
     let cancelled = false;
     setLoadingFavs(true);
-    Promise.allSettled(favs.map((id) => api.getProduct(id)))
-      .then((results) => {
-        if (cancelled) return;
-        const resolved = results
-          .filter(
-            (r): r is PromiseFulfilledResult<ProductDetail> =>
-              r.status === 'fulfilled',
-          )
-          .map((r) => detailToSummary(r.value));
-        setFavProducts(resolved);
+    api
+      .searchProducts({ ids: favs, pageSize: 50 })
+      .then((res) => {
+        if (!cancelled) setFavProducts(res.items);
+      })
+      .catch(() => {
+        if (!cancelled) setFavProducts([]);
       })
       .finally(() => {
         if (!cancelled) setLoadingFavs(false);

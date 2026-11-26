@@ -171,3 +171,12 @@ test('listActiveStores y getCatalogFacets devuelven tiendas activas y facetas vi
   assert.deepEqual(facets.brands, ['Arturo Calle', 'Bosi', 'Koaj']);
   assert.deepEqual(facets.priceRange, { min: 39900, max: 229900 });
 });
+
+test('searchProducts filtra por ids omitiendo productos ocultos o inexistentes', async () => {
+  const { service, productRepository, shirtBlack, jeans, hidden } = await setup();
+  const page = await service.searchProducts({ ids: [shirtBlack.id, jeans.id, hidden.id, 'no-existe'] });
+
+  assert.deepEqual(productRepository.lastCriteria.ids, [shirtBlack.id, jeans.id, hidden.id, 'no-existe']);
+  assert.deepEqual(page.items.map((p) => p.id), [shirtBlack.id, jeans.id]);
+  assert.equal(page.totalItems, 2);
+});

@@ -214,3 +214,22 @@ test('PgProductRepository.getFacets consulta colores, tallas, marcas, subcategor
     priceRange: { min: 39900, max: 229900 },
   });
 });
+
+test('PgProductRepository.search filtra por ids respetando visibilidad y tiendas activas', async () => {
+  const pool = new FakePool([
+    { match: /COUNT\(\*\)/, rows: [{ total: 1 }] },
+    { match: /FROM products p JOIN stores/, rows: [productRow()] },
+  ]);
+  const page = await new PgProductRepository({ pool }).search({
+    ids: [IDS.top, 'id-invalido'],
+    page: 1,
+    pageSize: 50,
+  });
+
+  const [countSql] = pool.sqlLog();
+  assert.match(countSql, /p\.is_hidden = FALSE AND s\.is_active = TRUE/);
+  assert.match(countSql, /p\.id = ANY\(\$1::uuid\[\]\)/);
+  assert.deepEqual(pool.queries[0].params[0], [IDS.top]);
+  assert.equal(page.items.length, 1);
+  assert.equal(page.items[0].id, IDS.top);
+});

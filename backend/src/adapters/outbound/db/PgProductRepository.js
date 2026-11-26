@@ -89,6 +89,10 @@ function buildSearchFilters(criteria) {
   // BR-01: nunca productos ocultos ni de tiendas inactivas.
   const where = ['p.is_hidden = FALSE', 's.is_active = TRUE'];
 
+  if (hasItems(criteria.ids)) {
+    where.push(`p.id = ANY(${add(criteria.ids.filter(isUuid))}::uuid[])`);
+  }
+
   const text = criteria.text?.trim();
   if (text) {
     const pattern = add(`%${escapeLike(text)}%`);

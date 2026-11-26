@@ -151,6 +151,7 @@ paths:
       security: [{}, { bearerAuth: [] }]
       parameters:
         - { in: query, name: q, schema: { type: string }, description: Texto libre (nombre, marca o subcategoría) }
+        - { in: query, name: ids, schema: { type: string }, description: Ids de productos separados por coma }
         - { in: query, name: minPrice, schema: { type: integer, minimum: 0 }, description: Precio mínimo en COP }
         - { in: query, name: maxPrice, schema: { type: integer, minimum: 0 }, description: Precio máximo en COP }
         - { in: query, name: brand, schema: { type: string }, description: Marcas }

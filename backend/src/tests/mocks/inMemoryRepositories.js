@@ -119,6 +119,7 @@ export class InMemoryProductRepository extends ProductRepository {
 
     let items = this.all().filter((p) => {
       if (p.isHidden) return false;
+      if (has(criteria.ids) && !criteria.ids.includes(String(p.id))) return false;
       if (text && ![p.name, p.brand, p.subcategory].some((field) => field?.toLowerCase().includes(text))) return false;
       if (criteria.minPrice != null && p.priceCop < criteria.minPrice) return false;
       if (criteria.maxPrice != null && p.priceCop > criteria.maxPrice) return false;

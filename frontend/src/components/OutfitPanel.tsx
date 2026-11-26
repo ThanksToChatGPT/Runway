@@ -32,14 +32,20 @@ export default function OutfitPanel({ onSlot }: OutfitPanelProps) {
     budget,
     setBudget,
     serverBudget,
+    refreshPreferences,
     toast,
     handleError,
   } = useApp();
   const [saving, setSaving] = useState(false);
+  const [savingBudget, setSavingBudget] = useState(false);
+  const [budgetDirty, setBudgetDirty] = useState(false);
   const [list, setList] = useState('');
 
   const tot = total(outfit);
-  const hasServerBudget = serverBudget?.maxBudget !== undefined && serverBudget?.maxBudget !== null;
+  const hasServerBudget =
+    !budgetDirty &&
+    serverBudget?.maxBudget !== undefined &&
+    serverBudget?.maxBudget !== null;
   const activeMaxBudget = hasServerBudget ? serverBudget.maxBudget : budget;
   const over = hasServerBudget
     ? serverBudget.isOverBudget
@@ -50,6 +56,29 @@ export default function OutfitPanel({ onSlot }: OutfitPanelProps) {
       : activeMaxBudget
         ? Math.abs(tot - activeMaxBudget)
         : 0;
+
+  async function persistBudget(): Promise<boolean> {
+    setSavingBudget(true);
+    try {
+      await api.updatePreferences({
+        maxOutfitBudget: activeMaxBudget ?? null,
+      });
+      await refreshPreferences();
+      setBudgetDirty(false);
+      return true;
+    } catch (err) {
+      handleError(err, 'No pudimos guardar el presupuesto.');
+      return false;
+    } finally {
+      setSavingBudget(false);
+    }
+  }
+
+  async function handleApplyBudget() {
+    if (await persistBudget()) {
+      toast('Presupuesto guardado');
+    }
+  }
 
   async function handleSave() {
     if (!user) {
@@ -68,6 +97,9 @@ export default function OutfitPanel({ onSlot }: OutfitPanelProps) {
 
     setSaving(true);
     try {
+      if (budgetDirty && !(await persistBudget())) {
+        return;
+      }
       const saved = await api.saveOutfit({
         name: cleanName,
         pieces: toPiecesPayload(outfit),
@@ -187,10 +219,21 @@ export default function OutfitPanel({ onSlot }: OutfitPanelProps) {
           onChange={(e) => {
             const raw = e.target.value;
             setBudget(raw === '' ? null : Math.max(0, Number(raw) || 0));
+            if (user) setBudgetDirty(true);
           }}
           style={{ width: 140 }}
         />
         <span>COP</span>
+        {user && budgetDirty && (
+          <button
+            type="button"
+            className="mini pri"
+            disabled={savingBudget}
+            onClick={handleApplyBudget}
+          >
+            {savingBudget ? 'Guardando…' : 'Aplicar'}
+          </button>
+        )}
       </label>
 
       {activeMaxBudget && activeMaxBudget > 0 ? (
