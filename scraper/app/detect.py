@@ -1,21 +1,21 @@
-"""`detect`: find out which e-commerce platform a store uses and which of its public APIs answer.
+"""Detecta qué plataforma de e-commerce usa una tienda y cuál de sus APIs públicas responde.
 
-1. Reads robots.txt and the home page politely (same client as the scraper; it never tries to get around blocks).
-2. Searches the HTML and the response headers for platform fingerprints (like `grep -o -i -E`), plus any word you pass with --grep.
-3. Tries the public catalog API of every platform that looks likely (robots.txt permitting) and says which one works.
-4. Prints a ready-to-paste entry for stores.json.
-If the home page is blocked, save it from your browser (Ctrl+S) and use --html FILE to analyse that file instead.
+1. Lee robots.txt y la página de inicio con el mismo cliente educado del scraper (nunca intenta saltarse
+   un bloqueo o una protección anti-bots).
+2. Busca huellas de la plataforma en el HTML, los encabezados y las cookies (como un `grep -i -E`).
+3. Prueba la API pública de catálogo de cada plataforma probable (si robots.txt lo permite) y dice cuál sirve.
+Si la página de inicio está bloqueada se puede enviar el HTML guardado desde el navegador (`html`).
 """
-import json
 import re
+import threading
 import time
-from pathlib import Path
 from urllib.parse import urlparse
 
-import requests
+import httpx
 
-from .adapters import get_adapter
-from .polite_http import RobotsDisallowed, make_client_from
+from app.extractors import get_extractor
+from app.normalizer import classify, detect_pack
+from app.polite_http import BudgetExhausted, RobotsDisallowed, ScraperError
 
 FINGERPRINTS = {
     "vtex": [r"vtexassets\.com", r"vtexcommercestable", r"myvtex\.com", r"vtex\.render-runtime", r"__RUNTIME__",
@@ -30,6 +30,36 @@ FINGERPRINTS = {
 }
 PROTECTION = {"cloudflare": r"cf-ray|__cf_bm|cloudflare", "akamai": r"akamai|_abck|ak_bmsc",
               "perimeterx": r"_px\w*|perimeterx", "datadome": r"datadome", "imperva": r"incap_ses|visid_incap"}
+ADAPTER_PLATFORMS = ("shopify", "vtex", "vtex_is")      # plataformas con extractor automático
+IS_TRADE_POLICY_PATH = "/api/io/_v/api/intelligent-search/product_search/trade-policy/1"
+
+
+def _is_list(d):
+    return isinstance(d, list) and len(d) > 0
+
+
+def _has(key):
+    return lambda d: isinstance(d, dict) and bool(d.get(key))
+
+
+# (nombre, plataforma, ruta, parámetros, acepta(json) -> bool)
+PROBES = [
+    ("Shopify products.json", "shopify", "/products.json", {"limit": 1}, _has("products")),
+    ("VTEX legacy catalog API", "vtex", "/api/catalog_system/pub/products/search", {"_from": 0, "_to": 0}, _is_list),
+    ("VTEX Intelligent Search", "vtex_is", "/api/io/_v/api/intelligent-search/product_search",
+     {"query": "", "page": 1, "count": 1, "locale": "es-CO"}, _has("products")),
+    ("VTEX Intelligent Search (trade policy 1)", "vtex_is", IS_TRADE_POLICY_PATH,
+     {"query": "", "page": 1, "count": 1, "locale": "es-CO"}, _has("products")),
+    ("WooCommerce Store API", "woocommerce", "/wp-json/wc/store/v1/products", {"per_page": 1}, _is_list),
+    ("Magento GraphQL", "magento", "/graphql", {"query": "{storeConfig{store_name}}"}, _has("data")),
+]
+
+
+def split_base(url):
+    """(origen, base) de una URL de tienda; la base conserva una subruta si la tienda vive bajo una."""
+    parts = urlparse(url if "//" in url else "https://" + url)
+    origin = f"{parts.scheme}://{parts.netloc}"
+    return origin, (origin + parts.path).rstrip("/")
 
 
 def _context(text, match, width=45):
@@ -37,231 +67,206 @@ def _context(text, match, width=45):
     return re.sub(r"\s+", " ", text[a:b]).strip()
 
 
-def grep(text, pattern, label=None, show=1, out=print):
+def grep(text, pattern):
+    """(cantidad de coincidencias, contexto de la primera) sin distinguir mayúsculas."""
     matches = list(re.finditer(pattern, text, re.I))
-    if matches:
-        out(f"    {len(matches):>3} x  {label or pattern}   e.g. …{_context(text, matches[0])}…")
-    return len(matches)
+    return len(matches), (_context(text, matches[0]) if matches else "")
 
 
-# (probe name, platform, path, params, accepts(json) -> bool)
-def _is_list(d): return isinstance(d, list) and len(d) > 0
-def _has(key): return lambda d: isinstance(d, dict) and bool(d.get(key))
+def _probe(client, base, name, platform, path, params, accepts):
+    probe = {"name": name, "platform": platform, "url": base + path, "status": None, "ok": False, "note": ""}
+    # VTEX responde 206 a las consultas por rango y puede responder 429 si llegan varias seguidas: se reintenta
+    for attempt in range(3):
+        try:
+            r = client.fetch_any(base + path, params=params)
+        except RobotsDisallowed:
+            probe["note"] = "omitida: robots.txt no permite esta ruta"
+            return probe
+        except httpx.HTTPError as exc:
+            probe["note"] = f"error de red: {exc.__class__.__name__}"
+            return probe
+        probe["status"] = r.status_code
+        if r.status_code == 429:
+            retry_after = r.headers.get("Retry-After", "")
+            wait = max(float(retry_after) if retry_after.isdigit() else 0, client.delay * (2 ** attempt))
+            try:
+                client.pause(wait)
+            except BudgetExhausted:
+                break
+            continue
+        if r.status_code not in (200, 206):
+            break
+        try:
+            probe["ok"] = bool(accepts(r.json()))
+            probe["note"] = "JSON utilizable" if probe["ok"] else "JSON sin productos"
+        except ValueError:
+            probe["note"] = "no es JSON (probablemente una página HTML)"
+        return probe
+    status = probe["status"]
+    if status in (401, 403):
+        probe["note"] = "cerrada a peticiones anónimas"
+    elif status == 404:
+        probe["note"] = "no existe"
+    elif status == 429:
+        probe["note"] = "límite de peticiones (intenta de nuevo en un momento)"
+    elif status is not None:
+        probe["note"] = f"respondió HTTP {status}"
+    return probe
 
 
-PROBES = [
-    ("Shopify products.json", "shopify", "/products.json", {"limit": 1}, _has("products")),
-    ("VTEX legacy catalog API", "vtex", "/api/catalog_system/pub/products/search", {"_from": 0, "_to": 0}, _is_list),
-    ("VTEX Intelligent Search", "vtex_is", "/api/io/_v/api/intelligent-search/product_search",
-     {"query": "", "page": 1, "count": 1, "locale": "es-CO"}, _has("products")),
-    ("VTEX Intelligent Search (trade policy 1)", "vtex_is", "/api/io/_v/api/intelligent-search/product_search/trade-policy/1",
-     {"query": "", "page": 1, "count": 1, "locale": "es-CO"}, _has("products")),
-    ("WooCommerce Store API", "woocommerce", "/wp-json/wc/store/v1/products", {"per_page": 1}, _is_list),
-    ("Magento GraphQL", "magento", "/graphql", {"query": "{storeConfig{store_name}}"}, _has("data")),
-]
-
-
-def _stock_sample(entry, client, out, size=20):
-    """Reads a few products to learn whether the store sells single garments or packs/kits."""
-    info = {"sample": 0, "packs": None}
+def _sample(base, platform, config, client, size):
+    """Lee unos pocos productos para saber si la tienda vende prendas sueltas o packs y de qué categorías."""
+    info = {"read": 0, "packs": 0, "categories": {}}
     try:
-        from .normalizer import detect_pack
-        packs = {"sample": 0, "count": 0}
-        for raw in get_adapter(entry, client, size).fetch():
-            info["sample"] += 1
-            packs["sample"] += 1
+        for raw in get_extractor(platform, base, client, config, size).fetch():
+            info["read"] += 1
             pack_size, _ = detect_pack(raw.name, raw.category, raw.description,
                                        is_kit=bool(raw.is_kit), unit_multiplier=raw.unit_multiplier)
-            if (pack_size or 1) > 1:
-                packs["count"] += 1
-        info["packs"] = packs if packs["sample"] else None
-    except Exception as exc:
-        out(f"   (could not read a sample of products: {exc})")
-        return info
-    if info["sample"] == 0:
-        out("   Sample: no products came back.")
-        return info
-    if info["packs"]:
-        out(f"   Garments: {info['packs']['count']} of {info['packs']['sample']} sample products look like "
-            f"packs/kits (several pieces sold together); the rest are single garments.")
+            if pack_size > 1:
+                info["packs"] += 1
+            category, _ = classify(raw.name, raw.category)
+            info["categories"][category] = info["categories"].get(category, 0) + 1
+    except (ScraperError, ValueError) as exc:
+        info["error"] = str(exc)
     return info
 
 
-def grep_html(source, words, settings, out=print):
-    """Search keywords in a saved HTML file or in the home page of a URL (read politely). Returns {word: count}."""
-    if Path(source).is_file():
-        text = Path(source).read_text(encoding="utf-8", errors="ignore")
-        out(f"Searching in file {source} ({len(text):,} characters)")
-    else:
-        client = make_client_from(settings)
-        url = source if "//" in source else "https://" + source
-        try:
-            r = client.fetch_any(url)
-        except (RobotsDisallowed, requests.RequestException) as exc:
-            out(f"Could not read {url}: {exc}")
-            return {}
-        if r.status_code != 200:
-            out(f"The page answered HTTP {r.status_code}. Save it from your browser (Ctrl+S) and search that file instead.")
-            return {}
-        text = r.text
-        out(f"Searching in {url} ({len(text):,} characters)")
-    counts = {}
-    for word in words:
-        counts[word] = grep(text, re.escape(word), out=out)
-        if not counts[word]:
-            out(f"      0 x  {word}")
-    return counts
+def detect_platform(base_url, client, html=None, grep_words=(), probe_all=False, stop_at_first=False,
+                    sample_size=0):
+    """Informe de detección. `platform`/`config` traen la recomendación (o None si no hay extractor posible).
 
+    `stop_at_first=True` (lo usa `/scrape`) solo prueba plataformas con extractor y para en la primera que
+    sirve, para gastar el mínimo de peticiones del presupuesto."""
+    origin, base = split_base(base_url)
+    result = {"base_url": base, "platform": None, "config": {}, "supported": False,
+              "robots": {"allowed": None, "error": None}, "home_status": None, "fingerprints": {},
+              "evidence": {}, "protection": [], "generator": None, "jsonld": {"blocks": 0, "products": 0},
+              "grep": {}, "probes": [], "message": ""}
+    header_text = ""
 
-def detect(url, settings, html_path=None, extra_grep=(), probe_all=False, save=True, out=print, snippet=True):
-    parts = urlparse(url if "//" in url else "https://" + url)
-    origin = f"{parts.scheme}://{parts.netloc}"
-    base = (origin + parts.path).rstrip("/")          # keeps a sub-path if the store lives under one
-    host = parts.netloc
-    client = make_client_from(settings)
-    result = {"base_url": base, "platforms": {}, "probes": [], "recommended": None, "home_status": None}
-    html, header_text = "", ""
-
-    out(f"== Detecting platform of {base}")
     # ---- robots.txt
     try:
-        r = client.fetch_any(origin + "/robots.txt")
-        out(f"  robots.txt: HTTP {r.status_code}")
-        if r.status_code == 200:
-            rules = [l.strip() for l in r.text.splitlines() if re.match(r"(?i)\s*(disallow|sitemap)", l)]
-            out("    " + ("\n    ".join(rules[:12]) if rules else "(no Disallow or Sitemap lines)"))
-    except (requests.RequestException, RobotsDisallowed) as exc:
-        out(f"  robots.txt: could not read ({exc})")
+        result["robots"]["allowed"] = client.allowed(base + "/")
+    except RobotsDisallowed as exc:
+        result["robots"] = {"allowed": False, "error": str(exc)}
+    except BudgetExhausted:
+        result["timed_out"] = True
 
-    # ---- home page
-    if html_path:
-        html = Path(html_path).read_text(encoding="utf-8", errors="ignore")
-        out(f"  Home page: read from file {html_path} ({len(html):,} characters)")
-    else:
+    # ---- página de inicio
+    if html is None:
+        html = ""
         try:
             r = client.fetch_any(base + "/")
-        except RobotsDisallowed as exc:
-            out(f"  Home page: not requested — {exc}")
-        except requests.RequestException as exc:
-            out(f"  Home page: request failed — {exc}")
+        except RobotsDisallowed:
+            pass
+        except BudgetExhausted:
+            result["timed_out"] = True
+        except httpx.HTTPError as exc:
+            result["home_error"] = exc.__class__.__name__
         else:
             result["home_status"] = r.status_code
             header_text = "\n".join(f"{k}: {v}" for k, v in r.headers.items())
-            cookie_names = ", ".join(sorted({c.name for c in client.session.cookies})) or "-"
+            cookie_names = ", ".join(sorted({c.name for c in client.http.cookies.jar})) or "-"
             header_text += f"\ncookies: {cookie_names}"
-            out(f"  Home page: HTTP {r.status_code}, {len(r.text):,} characters, server={r.headers.get('server', '-')}")
             if r.status_code == 200:
                 html = r.text
-                if save:
-                    name = f"detect_{host.replace(':', '_')}.html"
-                    Path(name).write_text(html, encoding="utf-8")
-                    out(f"  Saved the HTML as {name} (you can also open it with grep / findstr)")
-            else:
-                out("  The store refused this request (it may use bot protection). I will not try to get around it.\n"
-                    "  Save the page from your browser (Ctrl+S) and run again with --html FILE.")
 
-    # ---- fingerprints (grep)
+    # ---- huellas (grep)
     text = html + "\n" + header_text
-    scores = {}
-    out("\n  Platform fingerprints found:")
     for platform, patterns in FINGERPRINTS.items():
-        n = sum(1 for pat in patterns if re.search(pat, text, re.I))
-        if n:
-            scores[platform] = n
-            out(f"   [{platform}]  {n}/{len(patterns)} signatures")
-            for pat in patterns:
-                grep(text, pat, out=out)
-    if not scores:
-        out("   (none)")
-    prot = [name for name, pat in PROTECTION.items() if re.search(pat, header_text, re.I)]
-    if prot:
-        out(f"\n  Bot protection hints in the headers/cookies: {', '.join(prot)}")
+        found = {}
+        for pattern in patterns:
+            count, context = grep(text, pattern)
+            if count:
+                found[pattern] = {"count": count, "context": context}
+        if found:
+            result["fingerprints"][platform] = len(found)
+            result["evidence"][platform] = found
+    result["protection"] = [name for name, pat in PROTECTION.items() if re.search(pat, header_text, re.I)]
     gen = re.search(r'<meta[^>]+name=["\']generator["\'][^>]+content=["\']([^"\']+)', html, re.I)
     if gen:
-        out(f"  <meta generator>: {gen.group(1)}")
-    jsonld = len(re.findall(r'application/ld\+json', html, re.I))
-    if jsonld:
-        prod = len(re.findall(r'"@type"\s*:\s*"Product"', html))
-        out(f"  JSON-LD blocks: {jsonld} ({prod} with @type Product) — useful for the html adapter")
-    if extra_grep:
-        out("\n  Your keywords:")
-        for word in extra_grep:
-            if not grep(text, re.escape(word), out=out):
-                out(f"      0 x  {word}")
-    result["platforms"] = scores
+        result["generator"] = gen.group(1)
+    result["jsonld"] = {"blocks": len(re.findall(r"application/ld\+json", html, re.I)),
+                        "products": len(re.findall(r'"@type"\s*:\s*"Product"', html))}
+    for word in grep_words or ():
+        result["grep"][word] = grep(text, re.escape(word))[0]
 
-    # ---- probe the public APIs
-    out("\n  Testing public catalog APIs:")
-    likely = set(scores) | ({"shopify", "vtex", "vtex_is", "woocommerce", "magento"} if (probe_all or not scores) else set())
+    # ---- APIs públicas: primero las probables por huellas; si ninguna sirve, el resto
+    scores = result["fingerprints"]
+    likely = set(scores)
     if "vtex" in likely:
-        likely.add("vtex_is")          # a VTEX store may keep only the Intelligent Search API open
+        likely.add("vtex_is")          # una tienda VTEX puede dejar abierta solo la API de Intelligent Search
+    everything = {p[1] for p in PROBES}
+    rounds = [likely, everything - likely] if (likely and not probe_all) else [everything]
     working = []
-    for name, platform, path, params, accepts in PROBES:
-        if platform not in likely:
-            continue
-        probe = {"name": name, "platform": platform, "url": base + path, "status": None, "ok": False, "note": ""}
-        r = None
-        # VTEX answers 206 (partial content) when asked for a range of products, and may answer
-        # 429 (too many requests) when several probes arrive together: both are worth retrying.
-        for attempt in range(3):
-            try:
-                r = client.fetch_any(base + path, params=params)
-            except RobotsDisallowed:
-                probe["note"] = "skipped: robots.txt does not allow this path"
+    try:
+        for candidates in rounds:
+            for name, platform, path, params, accepts in PROBES:
+                if platform not in candidates or (stop_at_first and platform not in ADAPTER_PLATFORMS):
+                    continue
+                probe = _probe(client, base, name, platform, path, params, accepts)
+                result["probes"].append(probe)
+                if probe["ok"]:
+                    working.append(probe)
+                    if stop_at_first:
+                        break
+            if any(p["platform"] in ADAPTER_PLATFORMS for p in working):
                 break
-            except requests.RequestException as exc:
-                probe["note"] = f"network error: {exc}"
-                break
-            probe["status"] = r.status_code
-            if r.status_code not in (200, 206, 429):
-                break
-            if r.status_code == 429:
-                time.sleep(2.0 + attempt)             # backoff, then probe again
-                continue
-            try:
-                probe["ok"] = bool(accepts(r.json()))
-                probe["note"] = "usable JSON" if probe["ok"] else "JSON but without products"
-            except ValueError:
-                probe["note"] = "not JSON (probably an HTML page)"
-            break
-        if probe["status"] is None and not probe["note"]:
-            probe["note"] = "could not reach the API"
-        if r is not None and probe["status"] is not None and not probe["ok"]:
-            if probe["status"] in (401, 403):
-                probe["note"] = "closed to anonymous requests"
-            elif probe["status"] == 404:
-                probe["note"] = "does not exist"
-            elif probe["status"] == 429 and not probe["ok"]:
-                probe["note"] = "rate limited (try again in a moment)"
-        result["probes"].append(probe)
-        mark = "OK " if probe["ok"] else "-- "
-        out(f"   {mark}{name:42} HTTP {probe['status'] or '-'}  {probe['note']}")
-        if probe["ok"]:
-            working.append(probe)
+    except BudgetExhausted:
+        result["timed_out"] = True
 
-    # ---- verdict
-    out("\n  Verdict:")
-    adapters = {"shopify", "vtex", "vtex_is"}
-    pick = next((p for p in working if p["platform"] in adapters), None)
+    # ---- veredicto
+    pick = next((p for p in working if p["platform"] in ADAPTER_PLATFORMS), None)
     if pick:
-        extra = {}
-        if "trade-policy" in pick["url"]:
-            extra = {"path": "/api/io/_v/api/intelligent-search/product_search/trade-policy/1"}
-        entry = {"id": re.sub(r"\W+", "-", host.replace("www.", "")).strip("-"), "name": host.replace("www.", ""),
-                 "base_url": base, "platform": pick["platform"], "config": extra, "is_active": True}
-        result["recommended"] = entry
-        result["stock"] = _stock_sample(entry, client, out)
-        if snippet:
-            out(f"   Use platform \"{pick['platform']}\". Paste this inside \"stores\" in stores.json (remember the comma between stores):")
-            out("   " + json.dumps(entry, indent=2).replace("\n", "\n   "))
-            out(f"   Then test it:  python -m outfit_scraper check {entry['id']}")
-        else:
-            out(f"   Platform detected: \"{pick['platform']}\". This store can be added.")
+        result["platform"] = pick["platform"]
+        result["config"] = {"path": IS_TRADE_POLICY_PATH} if "trade-policy" in pick["url"] else {}
+        result["supported"] = True
+        result["message"] = f"Plataforma detectada: {pick['platform']}."
+        if sample_size:
+            result["sample"] = _sample(base, pick["platform"], result["config"], client, sample_size)
     elif working:
-        out(f"   The store answers the {working[0]['platform']} API, but this project has no adapter for it yet.")
-        out("   Send this report to get one, or use the html adapter (selectors) or JSON-LD.")
+        result["message"] = (f"La tienda responde la API de {working[0]['platform']}, pero el scraper aún no tiene "
+                             "extractor para ella. Usa la plataforma 'html' con selectores.")
+    elif result.get("timed_out"):
+        result["message"] = "Se acabó el tiempo disponible antes de identificar la plataforma."
+    elif result["robots"]["allowed"] is False and not any(p["status"] for p in result["probes"]):
+        result["message"] = "robots.txt no permite leer esta tienda; el scraper no intenta saltarse el bloqueo."
     else:
-        out("   No public catalog API answered. Options: (1) read the list pages with the html adapter (selectors),\n"
-            "   (2) check the sitemap for product URLs, (3) ask the store for an API or a data feed.\n"
-            "   Please share this report so we can choose.")
+        hint = f" Protección anti-bots: {', '.join(result['protection'])}." if result["protection"] else ""
+        result["message"] = ("Ninguna API pública de catálogo respondió. Opciones: usar la plataforma 'html' con "
+                             "selectores, revisar el sitemap o pedir a la tienda un feed de datos." + hint)
     return result
+
+
+class DetectionCache:
+    """Recuerda la plataforma detectada de cada tienda para no repetir la detección en cada scraping."""
+
+    def __init__(self, ttl_seconds=6 * 3600, clock=time.monotonic):
+        self.ttl = ttl_seconds
+        self.clock = clock
+        self._data = {}
+        self._lock = threading.Lock()
+
+    def get(self, base):
+        with self._lock:
+            entry = self._data.get(base)
+            if entry is None:
+                return None
+            if self.clock() - entry["at"] > self.ttl:
+                del self._data[base]
+                return None
+            return {"platform": entry["platform"], "config": dict(entry["config"])}
+
+    def put(self, base, platform, config):
+        if self.ttl <= 0:
+            return
+        with self._lock:
+            self._data[base] = {"platform": platform, "config": dict(config or {}), "at": self.clock()}
+
+    def invalidate(self, base):
+        with self._lock:
+            self._data.pop(base, None)
+
+    def clear(self):
+        with self._lock:
+            self._data.clear()

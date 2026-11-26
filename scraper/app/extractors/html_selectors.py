@@ -1,21 +1,22 @@
-"""For stores without a public JSON endpoint: read the product list pages with CSS selectors.
+"""Para tiendas sin un endpoint JSON público: lee las páginas de listado con selectores CSS.
 
-Store config example:
+Configuración (campo `config` de la petición, junto con `"platform": "html"`):
 {
   "list_urls": [{"url": "https://shop.com/hombre/camisetas?page={page}", "category": "camiseta"}],
   "max_pages": 5,
   "selectors": {"item": ".product-card", "name": ".title", "price": ".price",
                 "link": "a@href", "image": "img@src", "brand": ".brand"}
 }
-Use "css" to read the text of an element and "css@attribute" to read an attribute.
+"css" lee el texto de un elemento y "css@atributo" lee un atributo. Por seguridad, las páginas de listado
+deben estar en el mismo host que `base_url`.
 """
 import re
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
-from ..models import RawProduct
-from .base import BaseAdapter
+from app.extractors.base import BaseExtractor, ConfigError
+from app.models import RawProduct
 
 
 def _read(el, spec):
@@ -30,35 +31,50 @@ def _read(el, spec):
     return node.get_text(" ", strip=True)
 
 
-class HtmlSelectorsAdapter(BaseAdapter):
+class HtmlSelectorsExtractor(BaseExtractor):
     platform = "html"
 
-    def fetch(self):
+    def _entries(self):
         sel = self.config.get("selectors")
-        if not sel or not self.config.get("list_urls"):
-            raise ValueError("html stores need 'list_urls' and 'selectors' in their config")
-        seen, count = set(), 0
-        for entry in self.config["list_urls"]:
+        entries = self.config.get("list_urls")
+        if not isinstance(sel, dict) or not sel.get("item") or not entries:
+            raise ConfigError("las tiendas html necesitan 'list_urls' y 'selectors' (con 'item') en su config")
+        host = urlparse(self.base_url).netloc
+        result = []
+        for entry in entries if isinstance(entries, list) else [entries]:
             entry = {"url": entry} if isinstance(entry, str) else entry
-            for page in range(1, int(self.config.get("max_pages", 50)) + 1):
+            if not isinstance(entry, dict) or not entry.get("url"):
+                raise ConfigError("cada elemento de 'list_urls' necesita 'url'")
+            url = urljoin(self.base_url + "/", entry["url"])
+            if urlparse(url).netloc != host:
+                raise ConfigError(f"'{entry['url']}' no está en el host de la tienda ({host})")
+            result.append({**entry, "url": url})
+        return sel, result
+
+    def fetch(self):
+        sel, entries = self._entries()
+        max_pages = self._int_config("max_pages", 50)
+        seen, count = set(), 0
+        for entry in entries:
+            for page in range(1, max_pages + 1):
                 url = entry["url"].replace("{page}", str(page))
                 soup = BeautifulSoup(self.client.get(url).text, "html.parser")
-                cards = soup.select(sel["item"])
                 new_cards = 0
-                for card in cards:
+                for card in soup.select(sel["item"]):
                     link = urljoin(url, _read(card, sel.get("link", "a@href")))
                     if not link or link in seen:
                         continue
                     seen.add(link)
                     new_cards += 1
+                    image = _read(card, sel.get("image"))
                     yield RawProduct(
                         external_id=re.sub(r"\W+", "-", urlparse(link).path).strip("-"),
                         name=_read(card, sel.get("name")), url=link,
                         price=_read(card, sel.get("price")), brand=_read(card, sel.get("brand")),
                         category=entry.get("category", ""),
-                        images=[urljoin(url, _read(card, sel.get("image")))] if _read(card, sel.get("image")) else [])
+                        images=[urljoin(url, image)] if image else [])
                     count += 1
                     if self.max_products and count >= self.max_products:
                         return
-                if new_cards == 0:        # empty page or a page we already read: stop
+                if new_cards == 0 or "{page}" not in entry["url"]:   # página vacía o repetida: se para
                     break

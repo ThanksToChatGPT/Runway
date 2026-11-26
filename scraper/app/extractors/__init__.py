@@ -1,15 +1,23 @@
-from .html_selectors import HtmlSelectorsAdapter
-from .shopify import ShopifyAdapter
-from .vtex import VtexAdapter
-from .vtex_is import VtexIntelligentSearchAdapter
+from app.extractors.base import BaseExtractor, ConfigError
+from app.extractors.html_selectors import HtmlSelectorsExtractor
+from app.extractors.mock_store import MockStoreExtractor
+from app.extractors.shopify import ShopifyExtractor
+from app.extractors.vtex import VtexExtractor
+from app.extractors.vtex_is import VtexIntelligentSearchExtractor
 
-ADAPTERS = {"shopify": ShopifyAdapter, "vtex": VtexAdapter, "vtex_is": VtexIntelligentSearchAdapter,
-            "html": HtmlSelectorsAdapter}
+EXTRACTORS = {
+    "shopify": ShopifyExtractor,
+    "vtex": VtexExtractor,
+    "vtex_is": VtexIntelligentSearchExtractor,
+    "html": HtmlSelectorsExtractor,
+    "mock": MockStoreExtractor,
+}
+PLATFORMS = tuple(EXTRACTORS)
 
 
-def get_adapter(store, client, max_products=None):
+def get_extractor(platform, base_url, client, config=None, max_products=None) -> BaseExtractor:
     try:
-        cls = ADAPTERS[store["platform"]]
+        cls = EXTRACTORS[platform]
     except KeyError:
-        raise ValueError(f"unknown platform {store['platform']!r}; use one of {sorted(ADAPTERS)}")
-    return cls(store, client, max_products)
+        raise ConfigError(f"plataforma desconocida {platform!r}; usa una de {sorted(EXTRACTORS)}") from None
+    return cls(base_url, client, config, max_products)

@@ -1,21 +1,22 @@
-"""Chooses the best image of a product: the garment alone (no model) if possible, otherwise another one.
+"""Elige la mejor imagen de un producto: la prenda sola (sin modelo) si se puede; si no, otra.
 
-Step 1 (no downloads): hints in the image URL, alt text and label ("flat", "packshot" vs "model", "look"...).
-Step 2 (needs Pillow): looks at the first few candidates. A garment photographed alone has a plain
-background and no skin tones; a model photo has skin tones. The images are only looked at in memory and
-thrown away: the database keeps only their URLs.
-This is a heuristic, so it can be wrong. Every image gets a `kind`: "product-only", "model" or "other".
+Paso 1 (sin descargas): pistas en la URL, el texto alternativo y la etiqueta ("flat", "packshot" vs
+"model", "look"...). VTEX nombra "ref-1.jpg" la foto frontal de la prenda sola.
+Paso 2 (opcional, necesita Pillow): mira las primeras candidatas. Una prenda fotografiada sola tiene fondo
+liso y sin tonos de piel; una foto con modelo tiene tonos de piel. Las imágenes solo se miran en memoria y
+se descartan: el servicio devuelve solo sus URLs.
+Es una heurística y puede equivocarse. Cada imagen recibe un `kind`: "product-only", "model" u "other".
 """
 import io
 import re
-from urllib.parse import urlparse
 
 try:
     from PIL import Image
     HAVE_PIL = True
-except ImportError:                      # the scraper still works, it just trusts the metadata hints
+except ImportError:                      # el scraper sigue funcionando, solo confía en las pistas de texto
     HAVE_PIL = False
 
+MAX_IMAGES = 8
 POSITIVE = {"flat", "flatlay", "packshot", "still", "ghost", "cutout", "producto", "product", "solo", "only",
             "frente", "front", "frontal", "ecom", "pack"}
 NEGATIVE = {"model", "modelo", "look", "lifestyle", "worn", "outfit", "campaign", "campana", "street",
@@ -23,8 +24,8 @@ NEGATIVE = {"model", "modelo", "look", "lifestyle", "worn", "outfit", "campaign"
 
 
 def _canonical(url):
-    """Same photo, different VTEX id path or query: /ids/750443/x.jpg and /ids/750444/x.jpg
-    with the same file name are different shots, but x.jpg?v=1 and x.jpg?v=2 are the same one."""
+    """La misma foto con otra query (x.jpg?v=1 y x.jpg?v=2) es una sola; /ids/750443/x.jpg y
+    /ids/750444/x.jpg con el mismo nombre son tomas distintas."""
     return url.split("?")[0].rstrip("/")
 
 
@@ -35,8 +36,7 @@ def _tokens(text):
 def meta_score(text):
     tokens = _tokens(text)
     base = 2 * len(tokens & POSITIVE) - 2 * len(tokens & NEGATIVE)
-    # VTEX image files follow "ref-1.jpg" (front), "ref-2.jpg" (detail), "ref-3.jpg" (back):
-    # the first number after the reference is the front shot of the garment alone.
+    # VTEX: "ref-1.jpg" (frente), "ref-2.jpg" (detalle), "ref-3.jpg" (espalda): el 1 es la prenda sola
     m = re.search(r"/(\d+)-(\d+)\.(?:jpe?g|png|webp)(?:[?#]|$)", (text or "").lower())
     if m:
         n = int(m.group(2))
@@ -45,17 +45,19 @@ def meta_score(text):
 
 
 def analyze(data):
-    """Returns {'bg_uniform', 'bg_light', 'skin'} for the bytes of an image, or None if it cannot be read."""
-    if not HAVE_PIL:
+    """{'bg_uniform', 'bg_light', 'skin'} para los bytes de una imagen, o None si no se puede leer."""
+    if not HAVE_PIL or not data:
         return None
     try:
         im = Image.open(io.BytesIO(data))
         im.draft("RGB", (256, 256))
         im = im.convert("RGB")
-        im.thumbnail((96, 96), Image.NEAREST)     # no smoothing: blending a red garment with white makes fake 'skin' pixels
+        im.thumbnail((96, 96), Image.NEAREST)     # sin suavizado: mezclar una prenda roja con blanco crea falsa 'piel'
     except Exception:
         return None
     w, h = im.size
+    if w < 4 or h < 4:
+        return None
     px = im.load()
     t = max(2, int(0.07 * min(w, h)))
     border = [px[x, y] for x in range(w) for y in range(h) if x < t or x >= w - t or y < t or y >= h - t]
@@ -78,7 +80,7 @@ def analyze(data):
 
 
 def classify(info):
-    """A garment of a skin-like color (beige) fills the picture with 'skin' pixels, so a very high ratio is not a model."""
+    """Una prenda color piel (beige) llena la foto de píxeles 'piel': una proporción muy alta no es un modelo."""
     if info is None:
         return "", 0.0
     if 0.06 <= info["skin"] <= 0.45:
@@ -89,17 +91,22 @@ def classify(info):
 
 
 def pick_images(urls, meta=None, fetch_bytes=None, max_candidates=3):
-    """Returns (urls in display order with the best one first, {url: kind}).
-    `fetch_bytes(url)` returns the bytes of an image or None; without it only the hints are used."""
+    """(URLs en orden con la mejor primero, {url: kind}). Deduplica y deja máximo 8 fotos.
+    `fetch_bytes(url)` devuelve los bytes de una imagen o None; sin él solo se usan las pistas."""
     meta = meta or {}
-    urls = list({_canonical(u): u for u in urls if u}.values())   # x.jpg?v=1 and x.jpg?v=2 are the same photo
+    deduped = {}
+    for u in urls:
+        if u:
+            deduped.setdefault(_canonical(u), u)                  # x.jpg?v=1 y x.jpg?v=2 son la misma foto
+    urls = list(deduped.values())
     if len(urls) <= 1:
         return urls, {}
-    hints = {u: meta_score(f"{meta.get(u, '')} {u}") for u in urls}   # the full URL: the "ref-1.jpg" number sits before the ?v= part
+    # la URL completa: el número de "ref-1.jpg" va antes de la parte ?v=
+    hints = {u: meta_score(f"{meta.get(u, '') or meta.get(_canonical(u), '')} {u}") for u in urls}
     order = sorted(range(len(urls)), key=lambda i: (-hints[urls[i]], i))
     kinds, total = {}, {}
-    decisive = any(hints[u] >= 2 for u in urls)     # "ref-1.jpg" already says which photo is the garment alone:
-    for rank, i in enumerate(order):                # no need to download pixels, the whole catalog gets much faster
+    decisive = any(hints[u] >= 2 for u in urls)     # si la URL ya dice cuál es la prenda sola, no se descarga nada
+    for rank, i in enumerate(order):
         u = urls[i]
         kind, visual = "", 0.0
         if fetch_bytes and HAVE_PIL and rank < max_candidates and not decisive:
@@ -109,11 +116,10 @@ def pick_images(urls, meta=None, fetch_bytes=None, max_candidates=3):
             if hints[u] <= -2:
                 kind = "other"
             elif hints[u] >= 2:
-                kind = "product-only"          # the URL/label itself says it: front shot of the garment alone
-                visual = max(visual, 6.0)      # a strong hint also protects it when the pixels could not be read
+                kind = "product-only"          # la URL/etiqueta lo dice: foto frontal de la prenda sola
+                visual = max(visual, 6.0)      # una pista fuerte la protege cuando no se pudieron leer los píxeles
         kinds[u] = kind
-        total[u] = hints[u] + visual - 0.05 * i          # a tiny bonus to the original order breaks ties
+        total[u] = hints[u] + visual - 0.05 * i          # un bono mínimo al orden original desempata
     best = max(urls, key=lambda u: total[u])
-    # keep at most 8 photos of one product: the viewer carousel stays useful and the URLs stay light
-    ordered = [best] + [u for u in urls if u != best]
-    return ordered[:8], {u: k for u, k in kinds.items() if k and u in ordered[:8]}
+    ordered = ([best] + [u for u in urls if u != best])[:MAX_IMAGES]
+    return ordered, {u: k for u, k in kinds.items() if k and u in ordered}

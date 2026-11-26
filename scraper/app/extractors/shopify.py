@@ -1,23 +1,31 @@
-"""Shopify stores publish their catalog at /products.json (it does not say how many units are left)."""
-from ..models import RawProduct
-from .base import BaseAdapter
+"""Las tiendas Shopify publican su catálogo en /products.json (no dicen cuántas unidades quedan)."""
+from app.extractors.base import BaseExtractor
+from app.models import RawProduct
 
 SIZE_WORDS = ("talla", "size", "tamano", "tamaño")
 COLOR_WORDS = ("color", "colour")
 
 
-class ShopifyAdapter(BaseAdapter):
+def _absolute(url):
+    return "https:" + url if url.startswith("//") else url
+
+
+class ShopifyExtractor(BaseExtractor):
     platform = "shopify"
 
     def fetch(self):
         count, page = 0, 1
-        while page <= int(self.config.get("max_pages", 400)):       # 400 pages x 250 = 100,000 products
+        max_pages = self._int_config("max_pages", 400)       # 400 páginas x 250 = 100 000 productos
+        while page <= max_pages:
             data = self.client.get_json(f"{self.base_url}/products.json", params={"limit": 250, "page": page})
-            products = data.get("products", [])
+            products = data.get("products", []) if isinstance(data, dict) else []
             if not products:
                 return
             for p in products:
-                yield self._parse(p)
+                raw = self._safe_parse(p)
+                if raw is None:
+                    continue
+                yield raw
                 count += 1
                 if self.max_products and count >= self.max_products:
                     return
@@ -44,15 +52,16 @@ class ShopifyAdapter(BaseAdapter):
         images, meta = [], {}
         for i in p.get("images", []):
             if i.get("src"):
-                images.append(i["src"])
-                meta[i["src"]] = i.get("alt") or ""
-        # Shopify has no "how many units are left" and no kit flag: the title and the tags say when it is a pack
+                src = _absolute(i["src"])
+                images.append(src)
+                meta[src] = i.get("alt") or ""
+        # Shopify no tiene "cuántas unidades quedan" ni marca de kit: el título y los tags delatan los packs
         kit_word = ("pack" in p.get("title", "").lower() or "kit" in tags.lower()
                     or "pack" in str(p.get("product_type", "")).lower())
         return RawProduct(
             external_id=str(p.get("id")), name=p.get("title", ""),
             url=f"{self.base_url}/products/{p.get('handle', '')}",
             price=min(prices) if prices else None, brand=p.get("vendor", ""),
-            category=f"{p.get('product_type', '')} {tags}", description=p.get("body_html", ""),
+            category=f"{p.get('product_type', '')} {tags}", description=p.get("body_html", "") or "",
             colors=colors, sizes=list(sizes.items()), images=images, image_meta=meta,
             is_kit=kit_word)

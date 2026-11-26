@@ -1,89 +1,33 @@
-from typing import Any
 from app.extractors.base import BaseExtractor
+from app.models import RawProduct
+
+# Catálogo fijo para desarrollo y pruebas locales: no hace ninguna petición de red.
+MOCK_ITEMS = [
+    ("mock-top-001", "Camiseta Oversize Algodón", "UrbanCO", "camisetas", "Negro", "$89.900 COP",
+     "camiseta-oversize", "photo-1521572163474-6864f9cf17ab", ["S", "M", "L", "XL"]),
+    ("mock-top-002", "Buzo Hoodie Esencial", "AndesWear", "buzos", "Beige", "$159.900",
+     "buzo-hoodie-esencial", "photo-1556821840-3a63f95609a7", ["S", "M", "L"]),
+    ("mock-bottom-001", "Jean Straight Fit Azul", "DenimLab", "pantalones", "Azul", "$169.900",
+     "jean-straight-azul", "photo-1542272604-787c3835535d", ["28", "30", "32", "34"]),
+    ("mock-bottom-002", "Pantalón Cargo Urbano", "UrbanCO", "joggers", "Verde Oliva", "$185.000",
+     "pantalon-cargo-urbano", "photo-1517438476312-10d79c077509", ["30", "32", "34"]),
+    ("mock-shoes-001", "Tenis Urbanos Blancos", "StepCO", "tenis", "Blanco", "$249.900",
+     "tenis-urbanos-blancos", "photo-1549298916-b41d501d3772", ["38", "39", "40", "41", "42"]),
+    ("mock-shoes-002", "Botines Cuero Negro", "StepCO", "zapatos", "Negro", "$319.900",
+     "botines-cuero-negro", "photo-1608256246200-53e635b5b65f", ["39", "40", "41", "42"]),
+]
 
 
 class MockStoreExtractor(BaseExtractor):
-    """Extractor de ejemplo funcional para pruebas locales del MVP."""
+    """Extractor de ejemplo para pruebas locales del MVP (`"platform": "mock"` o `slug` "mock")."""
 
-    def extract(self, base_url: str) -> list[dict[str, Any]]:
-        base = base_url.rstrip("/")
-        return [
-            {
-                "external_id": "mock-top-001",
-                "title": "Camiseta Oversize Algodón",
-                "brand": "UrbanCO",
-                "raw_category": "camisetas",
-                "raw_color": "Negro",
-                "raw_price": "$89.900 COP",
-                "product_url": f"{base}/producto/camiseta-oversize",
-                "images": [
-                    "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=600"
-                ],
-                "sizes": ["S", "M", "L", "XL"],
-            },
-            {
-                "external_id": "mock-top-002",
-                "title": "Buzo Hoodie Esencial",
-                "brand": "AndesWear",
-                "raw_category": "buzos",
-                "raw_color": "Beige",
-                "raw_price": "$159.900",
-                "product_url": f"{base}/producto/buzo-hoodie-esencial",
-                "images": [
-                    "https://images.unsplash.com/photo-1556821840-3a63f95609a7?w=600"
-                ],
-                "sizes": ["S", "M", "L"],
-            },
-            {
-                "external_id": "mock-bottom-001",
-                "title": "Jean Straight Fit Azul",
-                "brand": "DenimLab",
-                "raw_category": "pantalones",
-                "raw_color": "Azul",
-                "raw_price": "$169.900",
-                "product_url": f"{base}/producto/jean-straight-azul",
-                "images": [
-                    "https://images.unsplash.com/photo-1542272604-787c3835535d?w=600"
-                ],
-                "sizes": ["28", "30", "32", "34"],
-            },
-            {
-                "external_id": "mock-bottom-002",
-                "title": "Pantalón Cargo Urbano",
-                "brand": "UrbanCO",
-                "raw_category": "joggers",
-                "raw_color": "Verde Oliva",
-                "raw_price": "$185.000",
-                "product_url": f"{base}/producto/pantalon-cargo-urbano",
-                "images": [
-                    "https://images.unsplash.com/photo-1517438476312-10d79c077509?w=600"
-                ],
-                "sizes": ["30", "32", "34"],
-            },
-            {
-                "external_id": "mock-shoes-001",
-                "title": "Tenis Urbanos Blancos",
-                "brand": "StepCO",
-                "raw_category": "tenis",
-                "raw_color": "Blanco",
-                "raw_price": "$249.900",
-                "product_url": f"{base}/producto/tenis-urbanos-blancos",
-                "images": [
-                    "https://images.unsplash.com/photo-1549298916-b41d501d3772?w=600"
-                ],
-                "sizes": ["38", "39", "40", "41", "42"],
-            },
-            {
-                "external_id": "mock-shoes-002",
-                "title": "Botines Cuero Negro",
-                "brand": "StepCO",
-                "raw_category": "zapatos",
-                "raw_color": "Negro",
-                "raw_price": "$319.900",
-                "product_url": f"{base}/producto/botines-cuero-negro",
-                "images": [
-                    "https://images.unsplash.com/photo-1608256246200-53e635b5b65f?w=600"
-                ],
-                "sizes": ["39", "40", "41", "42"],
-            },
-        ]
+    platform = "mock"
+
+    def fetch(self):
+        for count, (ext_id, title, brand, category, color, price, path, photo, sizes) in enumerate(MOCK_ITEMS, 1):
+            yield RawProduct(
+                external_id=ext_id, name=title, url=f"{self.base_url}/producto/{path}", price=price,
+                brand=brand, category=category, colors=[color], sizes=[(s, True) for s in sizes],
+                images=[f"https://images.unsplash.com/{photo}?w=600"])
+            if self.max_products and count >= self.max_products:
+                return

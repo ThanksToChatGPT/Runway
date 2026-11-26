@@ -31,3 +31,13 @@ cd backend
 npm install
 npm test
 ```
+
+## Tests del scraper
+
+```bash
+cd scraper
+pip install -r requirements.txt
+python -m unittest discover -s tests -t .
+```
+
+Detalles del servicio (endpoints, detección de plataforma, variables de entorno) en [`scraper/README.md`](scraper/README.md).

@@ -25,6 +25,10 @@ services:
     restart: unless-stopped
     environment:
       PORT: 8000
+      # El scraper se da un presupuesto menor que este timeout del backend para responder a tiempo.
+      SCRAPER_TIMEOUT_MS: ${SCRAPER_TIMEOUT_MS:-15000}
+      SCRAPER_MAX_PRODUCTS: ${SCRAPER_MAX_PRODUCTS:-150}
+      SCRAPER_IMAGE_ANALYSIS: ${SCRAPER_IMAGE_ANALYSIS:-false}
     ports:
       - "8000:8000"
 
@@ -44,6 +48,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change_me_in_production_min_32_characters}
       SCRAPER_URL: ${SCRAPER_URL:-http://scraper:8000}
       SCRAPER_SERVICE_URL: ${SCRAPER_SERVICE_URL:-http://scraper:8000}
+      SCRAPER_TIMEOUT_MS: ${SCRAPER_TIMEOUT_MS:-15000}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
     ports:
       - "4000:4000"
