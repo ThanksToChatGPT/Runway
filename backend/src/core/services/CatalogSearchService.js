@@ -79,6 +79,20 @@ export class CatalogSearchService extends CatalogSearchPort {
     const stores = indexStoresById(await this.#stores.findAll());
     return { products: products.map((product) => toProductDetailDto(product, stores)) };
   }
+
+  async listActiveStores() {
+    const stores = await this.#stores.findAll({ onlyActive: true });
+    return { items: stores.map((store) => ({ id: store.id, name: store.name })) };
+  }
+
+  async getCatalogFacets() {
+    const activeStores = await this.#stores.findAll({ onlyActive: true });
+    const activeStoreIds = activeStores.map((store) => store.id);
+    if (activeStoreIds.length === 0) {
+      return { colors: [], sizes: [], brands: [], subcategories: [], priceRange: { min: null, max: null } };
+    }
+    return this.#products.getFacets({ activeStoreIds });
+  }
 }
 
 /** Valida y normaliza los filtros de la API en `ProductSearchCriteria`. */

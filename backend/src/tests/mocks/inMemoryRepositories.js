@@ -170,6 +170,23 @@ export class InMemoryProductRepository extends ProductRepository {
     }
     return { inserted, updated };
   }
+
+  async getFacets({ activeStoreIds } = {}) {
+    const allowedStores = Array.isArray(activeStoreIds) ? new Set(activeStoreIds) : null;
+    const visible = this.all().filter((p) => !p.isHidden && (!allowedStores || allowedStores.has(p.storeId)));
+    const uniq = (values) => [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    const prices = visible.map((p) => p.priceCop);
+    return {
+      colors: uniq(visible.map((p) => p.color)),
+      sizes: uniq(visible.flatMap((p) => p.getAvailableSizes())),
+      brands: uniq(visible.map((p) => p.brand)),
+      subcategories: uniq(visible.map((p) => p.subcategory)),
+      priceRange: {
+        min: prices.length > 0 ? Math.min(...prices) : null,
+        max: prices.length > 0 ? Math.max(...prices) : null,
+      },
+    };
+  }
 }
 
 export class InMemoryOutfitRepository extends OutfitRepository {

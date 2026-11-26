@@ -79,4 +79,14 @@ export class ProductRepository {
   async upsertMany(storeId, products) {
     notImplemented('ProductRepository', 'upsertMany');
   }
+
+  /**
+   * Valores disponibles en productos visibles de tiendas activas para poblar
+   * los filtros del catálogo (colores, tallas, marcas, subcategorías y rango COP).
+   * @param {{ activeStoreIds?: string[] }} [options]
+   * @returns {Promise<import('../../inbound/dtos/catalogDtos.js').CatalogFacetsDto>}
+   */
+  async getFacets(options = {}) {
+    notImplemented('ProductRepository', 'getFacets');
+  }
 }

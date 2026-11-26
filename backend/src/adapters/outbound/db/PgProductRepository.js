@@ -1,6 +1,6 @@
 import { ProductRepository, PRICE_SORT } from '../../../core/ports/index.js';
 import { getPool } from './pool.js';
-import { toProduct } from './mappers.js';
+import { toNumberOrNull, toProduct } from './mappers.js';
 import { escapeLike, isUuid, withTransaction } from './sqlHelpers.js';
 
 const PRODUCT_COLUMNS = `p.id, p.store_id, p.name, p.brand, p.category, p.subcategory, p.material,
@@ -224,6 +224,44 @@ export class PgProductRepository extends ProductRepository {
 
       return { inserted, updated };
     });
+  }
+
+  async getFacets() {
+    const baseWhere =
+      'FROM products p JOIN stores s ON s.id = p.store_id WHERE p.is_hidden = FALSE AND s.is_active = TRUE';
+    const [colorsRes, sizesRes, brandsRes, subcategoriesRes, rangeRes] = await Promise.all([
+      this.#db.query(
+        `SELECT DISTINCT p.color AS value ${baseWhere} AND p.color IS NOT NULL AND TRIM(p.color) <> '' ORDER BY p.color ASC`,
+      ),
+      this.#db.query(
+        `SELECT DISTINCT ps.size AS value
+         FROM product_size_stocks ps
+         JOIN products p ON p.id = ps.product_id
+         JOIN stores s ON s.id = p.store_id
+         WHERE p.is_hidden = FALSE AND s.is_active = TRUE AND ps.is_available = TRUE
+         ORDER BY ps.size ASC`,
+      ),
+      this.#db.query(
+        `SELECT DISTINCT p.brand AS value ${baseWhere} AND p.brand IS NOT NULL AND TRIM(p.brand) <> '' ORDER BY p.brand ASC`,
+      ),
+      this.#db.query(
+        `SELECT DISTINCT p.subcategory AS value ${baseWhere} AND p.subcategory IS NOT NULL AND TRIM(p.subcategory) <> '' ORDER BY p.subcategory ASC`,
+      ),
+      this.#db.query(`SELECT MIN(p.price_cop) AS min_price, MAX(p.price_cop) AS max_price ${baseWhere}`),
+    ]);
+    const rangeRow = rangeRes.rows[0] ?? {};
+    const min = toNumberOrNull(rangeRow.min_price);
+    const max = toNumberOrNull(rangeRow.max_price);
+    return {
+      colors: colorsRes.rows.map((r) => r.value),
+      sizes: sizesRes.rows.map((r) => r.value),
+      brands: brandsRes.rows.map((r) => r.value),
+      subcategories: subcategoriesRes.rows.map((r) => r.value),
+      priceRange: {
+        min: min === null ? null : Math.round(min),
+        max: max === null ? null : Math.round(max),
+      },
+    };
   }
 }
 

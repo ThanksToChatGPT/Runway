@@ -6,6 +6,8 @@ import { notImplemented } from '../contract.js';
 /** @typedef {import('./dtos/catalogDtos.js').ProductPageDto} ProductPageDto */
 /** @typedef {import('./dtos/catalogDtos.js').ProductDetailDto} ProductDetailDto */
 /** @typedef {import('./dtos/catalogDtos.js').ProductComparisonDto} ProductComparisonDto */
+/** @typedef {import('./dtos/catalogDtos.js').CatalogFacetsDto} CatalogFacetsDto */
+/** @typedef {import('./dtos/catalogDtos.js').PublicStoresDto} PublicStoresDto */
 
 /**
  * Casos de uso del catálogo (US-18 a US-43).
@@ -39,5 +41,21 @@ export class CatalogSearchPort {
    */
   async compareProducts(input) {
     notImplemented('CatalogSearchPort', 'compareProducts');
+  }
+
+  /**
+   * Lista pública de tiendas activas para filtros del catálogo.
+   * @returns {Promise<PublicStoresDto>}
+   */
+  async listActiveStores() {
+    notImplemented('CatalogSearchPort', 'listActiveStores');
+  }
+
+  /**
+   * Facetas disponibles del catálogo (colores, tallas, marcas, subcategorías y rango COP).
+   * @returns {Promise<CatalogFacetsDto>}
+   */
+  async getCatalogFacets() {
+    notImplemented('CatalogSearchPort', 'getCatalogFacets');
   }
 }

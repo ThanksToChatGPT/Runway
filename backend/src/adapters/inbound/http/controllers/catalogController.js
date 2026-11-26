@@ -39,6 +39,16 @@ export function createCatalogController(catalogService) {
       const comparison = await catalogService.compareProducts({ productIds: toList(req.query.ids) });
       res.status(200).json(comparison);
     },
+
+    async facets(_req, res) {
+      const facets = await catalogService.getCatalogFacets();
+      res.status(200).json(facets);
+    },
+
+    async listStores(_req, res) {
+      const stores = await catalogService.listActiveStores();
+      res.status(200).json(stores);
+    },
   };
 }
 

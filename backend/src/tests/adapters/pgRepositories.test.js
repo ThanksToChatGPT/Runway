@@ -196,3 +196,21 @@ test('findByIdForUser filtra por dueño y rehidrata aunque la prenda esté ocult
   assert.equal(outfit.getSlot('bottom').product, null);
   assert.equal(outfit.totalCostCop, 89900);
 });
+
+test('PgProductRepository.getFacets consulta colores, tallas, marcas, subcategorías y rango COP', async () => {
+  const pool = new FakePool([
+    { match: /DISTINCT p\.color/, rows: [{ value: 'black' }, { value: 'white' }] },
+    { match: /DISTINCT ps\.size/, rows: [{ value: 'M' }, { value: '40' }] },
+    { match: /DISTINCT p\.brand/, rows: [{ value: 'Koaj' }] },
+    { match: /DISTINCT p\.subcategory/, rows: [{ value: 'camiseta' }] },
+    { match: /MIN\(p\.price_cop\)/, rows: [{ min_price: '39900.00', max_price: '229900.00' }] },
+  ]);
+  const facets = await new PgProductRepository({ pool }).getFacets();
+  assert.deepEqual(facets, {
+    colors: ['black', 'white'],
+    sizes: ['M', '40'],
+    brands: ['Koaj'],
+    subcategories: ['camiseta'],
+    priceRange: { min: 39900, max: 229900 },
+  });
+});

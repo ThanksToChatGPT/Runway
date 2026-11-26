@@ -156,3 +156,18 @@ test('compareProducts exige entre 2 y 4 productos distintos y disponibles', asyn
   await assert.rejects(service.compareProducts({ productIds: [jeans.id, 'product-99'] }), NotFoundError);
   await assert.rejects(service.compareProducts({ productIds: [jeans.id, hidden.id] }), NotFoundError);
 });
+
+test('listActiveStores y getCatalogFacets devuelven tiendas activas y facetas visibles', async () => {
+  const { service, bogota, cali } = await setup();
+  const stores = await service.listActiveStores();
+  assert.deepEqual(stores.items, [
+    { id: bogota.id, name: 'Tienda Bogotá' },
+    { id: cali.id, name: 'Tienda Cali' },
+  ]);
+
+  const facets = await service.getCatalogFacets();
+  assert.deepEqual(facets.colors, ['black', 'navy', 'white']);
+  assert.deepEqual(facets.sizes, ['40', 'M']);
+  assert.deepEqual(facets.brands, ['Arturo Calle', 'Bosi', 'Koaj']);
+  assert.deepEqual(facets.priceRange, { min: 39900, max: 229900 });
+});
