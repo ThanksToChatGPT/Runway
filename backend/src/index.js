@@ -1,61 +1,116 @@
-import express from 'express';
-import cors from 'cors';
+/**
+ * Composition Root: único lugar donde se instancian los adaptadores concretos
+ * y se conectan con el core.
+ *
+ *   pool PostgreSQL → repositorios → servicios (puertos entrantes) → app HTTP
+ */
+import { readFileSync } from 'node:fs';
+import { parse as parseYaml } from 'yaml';
 
-import { createPool } from './adapters/outbound/db/pool.js';
-import { createUserRepository } from './adapters/outbound/db/userRepository.js';
-import { createProductRepository } from './adapters/outbound/db/productRepository.js';
-import { createOutfitRepository } from './adapters/outbound/db/outfitRepository.js';
-import { createStoreRepository } from './adapters/outbound/db/storeRepository.js';
-import { createScraperClient } from './adapters/outbound/scraper/scraperClient.js';
+import {
+  getPool,
+  closePool,
+  PgUserRepository,
+  PgPreferenceRepository,
+  PgStoreRepository,
+  PgProductRepository,
+  PgOutfitRepository,
+  BcryptPasswordHasher,
+  JwtTokenService,
+  HttpScraperAdapter,
+} from './adapters/outbound/index.js';
+import {
+  AuthAndUserService,
+  CatalogSearchService,
+  OutfitBuilderService,
+  AdminStoreService,
+} from './core/services/index.js';
+import { createHttpApp } from './adapters/inbound/http/app.js';
 
-import { createAuthService } from './core/services/authService.js';
-import { createCatalogService } from './core/services/catalogService.js';
-import { createOutfitService } from './core/services/outfitService.js';
-import { createAdminService } from './core/services/adminService.js';
+const OPENAPI_PATH = new URL('../openapi.yaml', import.meta.url);
 
-import { createAuthMiddleware } from './adapters/inbound/http/authMiddleware.js';
-import { createApiRouter } from './adapters/inbound/http/routes.js';
-import { errorHandler } from './adapters/inbound/http/errorHandler.js';
+function loadOpenApiDocument() {
+  try {
+    return parseYaml(readFileSync(OPENAPI_PATH, 'utf8'));
+  } catch (error) {
+    console.warn('[api] No se pudo cargar openapi.yaml; /api/docs no estará disponible:', error.message);
+    return undefined;
+  }
+}
 
-const PORT = Number(process.env.PORT || 4000);
-const DATABASE_URL =
-  process.env.DATABASE_URL || 'postgresql://outfit_user:outfit_pass@localhost:5432/outfit_builder';
-const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
-const SCRAPER_URL = process.env.SCRAPER_URL || 'http://localhost:8000';
-const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:3000';
+/** `TRUST_PROXY=1` (saltos de proxy), `loopback`, una IP/subred… o sin definir. */
+function trustProxyFromEnv(value) {
+  if (value === undefined || value === '') return undefined;
+  if (value === 'true') return 1;
+  if (value === 'false') return false;
+  return /^\d+$/.test(value) ? Number(value) : value;
+}
 
-// Outbound adapters
-const pool = createPool(DATABASE_URL);
-const userRepo = createUserRepository(pool);
-const productRepo = createProductRepository(pool);
-const outfitRepo = createOutfitRepository(pool);
-const storeRepo = createStoreRepository(pool);
-const scraperGateway = createScraperClient({ scraperUrl: SCRAPER_URL });
+function buildApp() {
+  // Adaptadores salientes
+  const pool = getPool();
+  const userRepository = new PgUserRepository({ pool });
+  const preferenceRepository = new PgPreferenceRepository({ pool });
+  const storeRepository = new PgStoreRepository({ pool });
+  const productRepository = new PgProductRepository({ pool });
+  const outfitRepository = new PgOutfitRepository({ pool });
+  const passwordHasher = BcryptPasswordHasher.fromEnv();
+  const tokenService = JwtTokenService.fromEnv();
+  const scraper = HttpScraperAdapter.fromEnv();
 
-// Core services
-const authService = createAuthService({ userRepo, jwtSecret: JWT_SECRET });
-const catalogService = createCatalogService({ productRepo });
-const outfitService = createOutfitService({ outfitRepo, productRepo, userRepo });
-const adminService = createAdminService({ storeRepo, productRepo, scraperGateway });
+  // Core: servicios que implementan los 4 puertos entrantes
+  const authService = new AuthAndUserService({ userRepository, preferenceRepository, passwordHasher, tokenService });
+  const catalogService = new CatalogSearchService({ productRepository, storeRepository, preferenceRepository });
+  const outfitService = new OutfitBuilderService({
+    productRepository,
+    outfitRepository,
+    preferenceRepository,
+    storeRepository,
+  });
+  const adminService = new AdminStoreService({ storeRepository, productRepository, scraper });
 
-// Inbound HTTP adapter
-const authMiddleware = createAuthMiddleware(JWT_SECRET);
-const app = express();
-app.use(cors({ origin: CORS_ORIGIN }));
-app.use(express.json());
-app.use(
-  '/api',
-  createApiRouter({
+  // Adaptador entrante HTTP
+  return createHttpApp({
     authService,
     catalogService,
     outfitService,
     adminService,
-    authMiddleware,
-    pool,
-  })
-);
-app.use(errorHandler);
+    checkDatabase: async () => {
+      await pool.query('SELECT 1');
+    },
+    openApiDocument: loadOpenApiDocument(),
+    options: {
+      corsOrigin: (process.env.CORS_ORIGIN || 'http://localhost:3000').split(',').map((origin) => origin.trim()),
+      trustProxy: trustProxyFromEnv(process.env.TRUST_PROXY),
+    },
+  });
+}
 
-app.listen(PORT, () => {
-  console.log(`Outfit Builder API running on http://localhost:${PORT}`);
-});
+function main() {
+  let app;
+  try {
+    app = buildApp();
+  } catch (error) {
+    // Configuración inválida (p. ej. JWT_SECRET corto): no arrancar.
+    console.error('[api] No se pudo iniciar el backend:', error.message);
+    process.exit(1);
+  }
+
+  const port = Number(process.env.PORT) || 4000;
+  const server = app.listen(port, () => {
+    console.log(`[api] Outfit Builder API en http://localhost:${port}/api (docs: /api/docs)`);
+  });
+
+  const shutdown = (signal) => {
+    console.log(`[api] ${signal} recibido, cerrando…`);
+    server.close(async () => {
+      await closePool().catch(() => {});
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(1), 10_000).unref();
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+}
+
+main();
