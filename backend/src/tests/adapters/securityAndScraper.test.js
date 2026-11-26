@@ -117,20 +117,41 @@ test('HttpScraperAdapter convierte cualquier falla en ScraperUnavailableError', 
   }
 });
 
+
 test('HttpScraperAdapter corta la petición al vencer el timeout', async () => {
-  const scraper = new HttpScraperAdapter({
-    baseUrl: 'http://scraper:8000',
-    timeoutMs: 50,
-    fetchImpl: (_url, { signal }) => new Promise((_resolve, reject) => {
-      signal.addEventListener('abort', () => reject(signal.reason));
-    }),
-  });
-  const started = Date.now();
-  await assert.rejects(scraper.extractProductsByStore(store), /no respondió a tiempo/);
-  assert.ok(Date.now() - started < 2000);
+  const keepAlive = setTimeout(() => {}, 2000);
+
+  try {
+    const scraper = new HttpScraperAdapter({
+      baseUrl: 'http://scraper:8000',
+      timeoutMs: 50,
+      fetchImpl: (_url, { signal }) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason));
+        }),
+    });
+
+    const started = Date.now();
+
+    await assert.rejects(
+      scraper.extractProductsByStore(store),
+      /no respondió a tiempo/
+    );
+
+    assert.ok(Date.now() - started < 2000);
+  } finally {
+    clearTimeout(keepAlive);
+  }
 });
 
 test('HttpScraperAdapter rechaza una URL de servicio inválida al construirse', () => {
-  assert.throws(() => new HttpScraperAdapter({ baseUrl: 'ftp://scraper' }), /http/);
-  assert.throws(() => new HttpScraperAdapter({ baseUrl: 'no es url' }), /válida/);
+  assert.throws(
+    () => new HttpScraperAdapter({ baseUrl: 'ftp://scraper' }),
+    /http/
+  );
+
+  assert.throws(
+    () => new HttpScraperAdapter({ baseUrl: 'no es url' }),
+    /válida/
+  );
 });
