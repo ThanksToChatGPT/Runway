@@ -1,95 +1,217 @@
 'use client';
 
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { api, formatCop } from '@/services/api';
-import type { Outfit } from '@/types';
+import ProductCard from '@/components/ProductCard';
+import { useApp } from '@/context/AppContext';
+import { formatCOP } from '@/domain/money';
+import { CATEGORIES, formatUpdatedAt } from '@/domain/product';
+import { api } from '@/services/api';
+import type { Outfit, ProductDetail, ProductSummary } from '@/types';
+
+function detailToSummary(detail: ProductDetail): ProductSummary {
+  const primary =
+    detail.images.find((i) => i.isPrimary)?.url ?? detail.images[0]?.url ?? null;
+  return {
+    id: detail.id,
+    name: detail.name,
+    brand: detail.brand,
+    category: detail.category,
+    subcategory: detail.subcategory,
+    color: detail.color,
+    priceCop: detail.priceCop,
+    currency: detail.currency,
+    isSecondHand: detail.isSecondHand,
+    primaryImageUrl: primary,
+    availableSizes: detail.sizes
+      .filter((s) => s.isAvailable)
+      .map((s) => s.size),
+    externalUrl: detail.externalUrl,
+    store: detail.store,
+  };
+}
 
 export default function OutfitsPage() {
+  const router = useRouter();
+  const { user, hydrated, favs, loadSavedOutfit, handleError } = useApp();
   const [outfits, setOutfits] = useState<Outfit[]>([]);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
-
-  async function loadOutfits() {
-    setLoading(true);
-    try {
-      const res = await api.getOutfits();
-      setOutfits(res.items);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Inicia sesión para ver tus outfits');
-    } finally {
-      setLoading(false);
-    }
-  }
+  const [loadingOutfits, setLoadingOutfits] = useState(false);
+  const [favProducts, setFavProducts] = useState<ProductSummary[]>([]);
+  const [loadingFavs, setLoadingFavs] = useState(false);
 
   useEffect(() => {
-    loadOutfits();
-  }, []);
+    if (!hydrated || !user) {
+      setOutfits([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingOutfits(true);
+    api
+      .getOutfits()
+      .then((res) => {
+        if (!cancelled) setOutfits(res.items);
+      })
+      .catch((err) => {
+        if (!cancelled) handleError(err, 'No pudimos cargar tus outfits.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingOutfits(false);
+      });
 
-  async function handleDelete(id: string) {
-    await api.deleteOutfit(id);
-    setOutfits((prev) => prev.filter((o) => o.id !== id));
+    return () => {
+      cancelled = true;
+    };
+  }, [handleError, hydrated, user]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    if (favs.length === 0) {
+      setFavProducts([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingFavs(true);
+    Promise.allSettled(favs.map((id) => api.getProduct(id)))
+      .then((results) => {
+        if (cancelled) return;
+        const resolved = results
+          .filter(
+            (r): r is PromiseFulfilledResult<ProductDetail> =>
+              r.status === 'fulfilled',
+          )
+          .map((r) => detailToSummary(r.value));
+        setFavProducts(resolved);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingFavs(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [favs, hydrated]);
+
+  function openInBuilder(outfit: Outfit) {
+    loadSavedOutfit(outfit);
+    router.push('/builder');
   }
 
-  if (loading) return <p className="text-sm text-gray-500">Cargando outfits...</p>;
-  if (error) return <p className="text-sm text-red-600">{error}</p>;
-
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold text-gray-900">Mis Outfits guardados</h1>
+    <>
+      <section className="ed-section">
+        <h1 className="ed-h1">Mis outfits</h1>
 
-      {outfits.length === 0 ? (
-        <div className="rounded-lg border bg-white p-8 text-center text-sm text-gray-500">
-          Aún no tienes outfits guardados.
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {outfits.map((outfit) => (
-            <div key={outfit.id} className="rounded-lg border bg-white p-5 shadow-sm">
-              <div className="flex items-center justify-between border-b pb-3">
-                <div>
-                  <h2 className="text-lg font-bold text-gray-900">{outfit.name}</h2>
-                  <p className="text-sm font-semibold text-gray-700">
-                    Total: {formatCop(outfit.total_cop)}
-                  </p>
-                </div>
-                <button
-                  onClick={() => handleDelete(outfit.id)}
-                  className="text-xs text-red-600 hover:underline"
-                >
-                  Eliminar
-                </button>
-              </div>
-
-              <div className="mt-3 space-y-2">
-                {outfit.slots.map((slot) => (
-                  <div
-                    key={slot.slot_type}
-                    className="flex items-center justify-between text-sm"
-                  >
-                    <div>
-                      <span className="mr-2 rounded bg-gray-100 px-2 py-0.5 text-xs uppercase text-gray-600">
-                        {slot.slot_type}
-                      </span>
-                      <span className="font-medium text-gray-900">{slot.title}</span>
-                      <span className="ml-2 text-gray-500">
-                        ({formatCop(slot.price_cop)})
-                      </span>
-                    </div>
-                    <a
-                      href={slot.product_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs font-medium text-indigo-600 hover:underline"
-                    >
-                      Comprar ↗
-                    </a>
-                  </div>
-                ))}
-              </div>
+        {!hydrated ? (
+          <p className="mut">Cargando…</p>
+        ) : !user ? (
+          <div className="empty">
+            <b>Inicia sesión para ver y guardar tus outfits.</b>
+            <div className="row2 center" style={{ marginTop: 12 }}>
+              <Link href="/auth" className="btn pri">
+                Ingresar
+              </Link>
             </div>
-          ))}
-        </div>
-      )}
-    </div>
+          </div>
+        ) : loadingOutfits ? (
+          <p className="mut">Cargando outfits guardados…</p>
+        ) : outfits.length === 0 ? (
+          <p className="mut">
+            Aún no guardas outfits. Arma uno en el{' '}
+            <Link href="/builder">constructor</Link>.
+          </p>
+        ) : (
+          <ul className="list">
+            {outfits.map((outfit) => (
+              <li key={outfit.id ?? outfit.name} style={{ display: 'grid', gap: 8 }}>
+                <div
+                  className="row2"
+                  style={{ justifyContent: 'space-between', margin: 0 }}
+                >
+                  <div>
+                    <b>{outfit.name}</b>{' '}
+                    <span className="mut">
+                      · {formatCOP(outfit.totalCostCop)}
+                    </span>
+                    {outfit.createdAt && (
+                      <span className="mut small">
+                        {' '}
+                        · Guardado el {formatUpdatedAt(outfit.createdAt)}
+                      </span>
+                    )}
+                    {outfit.budget?.isOverBudget && (
+                      <span
+                        className="small"
+                        style={{ color: 'var(--warn)', marginLeft: 8 }}
+                      >
+                        (Sobre presupuesto)
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn pri"
+                    onClick={() => openInBuilder(outfit)}
+                  >
+                    Abrir en el constructor
+                  </button>
+                </div>
+
+                <div className="row2" style={{ margin: 0 }}>
+                  {outfit.slots.map((slot) =>
+                    slot.piece ? (
+                      <span
+                        key={slot.slotType}
+                        className="chip2"
+                        style={{ borderRadius: 9, cursor: 'default' }}
+                      >
+                        <small className="mut">{CATEGORIES[slot.slotType]}:</small>{' '}
+                        <b>{slot.piece.name}</b>
+                        <span className="mut">
+                          ({slot.piece.store?.name || 'Tienda'} ·{' '}
+                          {formatCOP(slot.piece.priceCop)})
+                        </span>
+                        <a
+                          href={slot.piece.externalUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mini"
+                        >
+                          Comprar ↗
+                        </a>
+                      </span>
+                    ) : (
+                      <span key={slot.slotType} className="small mut">
+                        {CATEGORIES[slot.slotType]}: vacío
+                      </span>
+                    ),
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="ed-section">
+        <h1 className="ed-h1">
+          Favoritos <span className="mut">· {favProducts.length}</span>
+        </h1>
+        {loadingFavs ? (
+          <p className="mut">Cargando favoritos…</p>
+        ) : favProducts.length === 0 ? (
+          <p className="mut">
+            Sin favoritos todavía. Toca el corazón ♡ en cualquier prenda del{' '}
+            <Link href="/">catálogo</Link>.
+          </p>
+        ) : (
+          <div className="cards">
+            {favProducts.map((product) => (
+              <ProductCard key={product.id} product={product} />
+            ))}
+          </div>
+        )}
+      </section>
+    </>
   );
 }

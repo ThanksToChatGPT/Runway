@@ -1,10 +1,13 @@
 import type { Metadata } from 'next';
 import './globals.css';
-import Navbar from '@/components/Navbar';
+import { AppProvider } from '@/context/AppContext';
+import Header from '@/components/Header';
+import Footer from '@/components/Footer';
 
 export const metadata: Metadata = {
-  title: 'Outfit Builder MVP',
-  description: 'Arma outfits en COP y compara prendas de múltiples tiendas',
+  title: 'Outfit Builder',
+  description:
+    'Compara prendas entre tiendas en COP, guarda favoritos y arma tu outfit paso a paso.',
 };
 
 export default function RootLayout({
@@ -14,9 +17,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es">
-      <body className="min-h-screen antialiased">
-        <Navbar />
-        <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
+      <body>
+        <AppProvider>
+          <Header />
+          <main className="page">{children}</main>
+          <Footer />
+        </AppProvider>
       </body>
     </html>
   );

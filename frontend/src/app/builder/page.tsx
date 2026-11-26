@@ -1,124 +1,189 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import OutfitCanvas from '@/components/OutfitCanvas';
-import { api, formatCop } from '@/services/api';
-import type { Category, Product } from '@/types';
+import { useEffect, useMemo, useState } from 'react';
+import OutfitPanel from '@/components/OutfitPanel';
+import ProductCard from '@/components/ProductCard';
+import Runway from '@/components/Runway';
+import { useApp } from '@/context/AppContext';
+import { CATEGORIES, SLOT_ORDER, cheapestIds } from '@/domain/product';
+import { api } from '@/services/api';
+import type { Category, ProductSummary } from '@/types';
 
 export default function BuilderPage() {
-  const [activeCategory, setActiveCategory] = useState<Category>('top');
-  const [catalog, setCatalog] = useState<Product[]>([]);
-  const [budgetLimit, setBudgetLimit] = useState<number>(500000);
-  const [slots, setSlots] = useState<Record<Category, Product | null>>({
-    top: null,
-    bottom: null,
-    shoes: null,
-  });
-  const [message, setMessage] = useState('');
+  const { outfit, undo, redo, canUndo, canRedo, handleError } = useApp();
+  const [slot, setSlot] = useState<Category | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [items, setItems] = useState<ProductSummary[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    if (!slot) return;
+    let cancelled = false;
+    setLoading(true);
     api
-      .getPreferences()
-      .then((prefs) => setBudgetLimit(prefs.budget_limit_cop))
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    api
-      .searchProducts({ category: activeCategory, limit: 24 })
-      .then((res) => setCatalog(res.items))
-      .catch(console.error);
-  }, [activeCategory]);
-
-  async function handleSaveOutfit(name: string) {
-    setMessage('');
-    try {
-      await api.saveOutfit({
-        name,
-        topId: slots.top?.id,
-        bottomId: slots.bottom?.id,
-        shoesId: slots.shoes?.id,
+      .searchProducts({
+        category: slot,
+        sort: 'price_asc',
+        page,
+        pageSize: 24,
+      })
+      .then((res) => {
+        if (cancelled) return;
+        setItems(res.items);
+        setTotalPages(Math.max(1, res.totalPages));
+      })
+      .catch((err) => {
+        if (!cancelled) handleError(err, 'No pudimos cargar opciones para esta sección.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
       });
-      setMessage('Outfit guardado correctamente.');
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : 'Error guardando outfit');
-    }
+    return () => {
+      cancelled = true;
+    };
+  }, [handleError, page, slot]);
+
+  function selectSlot(next: Category) {
+    setPage(1);
+    setSlot(next);
   }
 
-  return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-      <div className="space-y-4 lg:col-span-2">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-gray-900">Outfit Builder</h1>
-          <div className="flex gap-2">
-            {(['top', 'bottom', 'shoes'] as Category[]).map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setActiveCategory(cat)}
-                className={`rounded-md px-3 py-1.5 text-sm font-medium capitalize ${
-                  activeCategory === cat
-                    ? 'bg-gray-900 text-white'
-                    : 'border bg-white text-gray-700'
-                }`}
-              >
-                {cat === 'shoes' ? 'Calzado' : cat}
-              </button>
-            ))}
-          </div>
-        </div>
+  const cheapest = useMemo(() => cheapestIds(items), [items]);
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {catalog.map((item) => {
-            const img = item.images?.[0]?.image_url || 'https://via.placeholder.com/300';
-            const selected = slots[activeCategory]?.id === item.id;
-            return (
-              <div
-                key={item.id}
-                className={`flex items-center gap-3 rounded-lg border bg-white p-3 shadow-sm ${
-                  selected ? 'ring-2 ring-gray-900' : ''
-                }`}
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={img}
-                  alt={item.title}
-                  className="h-20 w-20 rounded object-cover"
+  return (
+    <>
+      <div className="builder">
+        <section className="ed-section">
+          <div
+            className="row2"
+            style={{ justifyContent: 'space-between', marginTop: 0 }}
+          >
+            <h1 className="ed-h1" style={{ marginBottom: 0 }}>
+              Pasarela
+            </h1>
+            <div className="row2" style={{ margin: 0 }}>
+              {SLOT_ORDER.map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  className="mini"
+                  aria-pressed={slot === cat}
+                  onClick={() => selectSlot(cat)}
+                >
+                  {CATEGORIES[cat]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ marginTop: 10 }}>
+            <Runway
+              outfit={outfit}
+              active={slot}
+              onSlot={selectSlot}
+              zoom={zoom}
+            />
+          </div>
+
+          <div className="row2 center" style={{ marginTop: 12 }}>
+            <button
+              type="button"
+              className="btn"
+              aria-label="Alejar"
+              onClick={() => setZoom((z) => Math.max(0.7, Number((z - 0.15).toFixed(2))))}
+            >
+              −
+            </button>
+            <button
+              type="button"
+              className="btn"
+              aria-label="Acercar"
+              onClick={() => setZoom((z) => Math.min(1.6, Number((z + 0.15).toFixed(2))))}
+            >
+              +
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={!canUndo}
+              onClick={undo}
+            >
+              Deshacer
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={!canRedo}
+              onClick={redo}
+            >
+              Rehacer
+            </button>
+          </div>
+          <p className="mut small center">
+            Toca una pieza de la pasarela para explorar prendas de esa categoría.
+          </p>
+        </section>
+
+        <section className="ed-section">
+          <h1 className="ed-h1">Tu outfit</h1>
+          <OutfitPanel onSlot={selectSlot} />
+        </section>
+      </div>
+
+      <section className="ed-section">
+        <h2 className="ed-h2">
+          {slot ? `Opciones: ${CATEGORIES[slot]}` : 'Opciones'}
+        </h2>
+        {!slot ? (
+          <p className="mut">
+            Elige una pieza de la pasarela para ver prendas disponibles,
+            ordenadas de menor a mayor precio.
+          </p>
+        ) : loading ? (
+          <p className="mut">Cargando opciones…</p>
+        ) : items.length === 0 ? (
+          <div className="empty">
+            No hay prendas disponibles en {CATEGORIES[slot].toLowerCase()}.
+          </div>
+        ) : (
+          <>
+            <div className="cards">
+              {items.map((p) => (
+                <ProductCard
+                  key={p.id}
+                  product={p}
+                  cheapest={cheapest.has(p.id)}
                 />
-                <div className="flex-1">
-                  <p className="font-semibold text-gray-900">{item.title}</p>
-                  <p className="text-xs text-gray-500">
-                    {item.brand} · {item.store_name}
-                  </p>
-                  <p className="mt-1 text-sm font-bold text-gray-900">
-                    {formatCop(item.price_cop)}
-                  </p>
-                </div>
+              ))}
+            </div>
+            {totalPages > 1 && (
+              <div className="row2 center" style={{ marginTop: 14 }}>
                 <button
                   type="button"
-                  onClick={() =>
-                    setSlots((prev) => ({ ...prev, [activeCategory]: item }))
-                  }
-                  className="rounded bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800"
+                  className="btn"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
                 >
-                  {selected ? 'En uso' : 'Elegir'}
+                  Anterior
+                </button>
+                <span className="small mut">
+                  Página {page} de {totalPages}
+                </span>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  Siguiente
                 </button>
               </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        <OutfitCanvas
-          slots={slots}
-          budgetLimitCop={budgetLimit}
-          onClearSlot={(slot) => setSlots((prev) => ({ ...prev, [slot]: null }))}
-          onSaveOutfit={handleSaveOutfit}
-        />
-        {message && (
-          <p className="rounded border bg-white p-3 text-sm text-gray-700">{message}</p>
+            )}
+          </>
         )}
-      </div>
-    </div>
+      </section>
+    </>
   );
 }

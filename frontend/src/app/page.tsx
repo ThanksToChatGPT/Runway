@@ -1,148 +1,190 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
-import FilterBar, { type CatalogFilters } from '@/components/FilterBar';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import FilterBar from '@/components/FilterBar';
 import ProductCard from '@/components/ProductCard';
+import { DEFAULT_FILTERS, useApp } from '@/context/AppContext';
+import { cheapestIds } from '@/domain/product';
 import { api } from '@/services/api';
-import type { Product, Store } from '@/types';
+import type { CatalogFacets, ProductSummary, StoreRef } from '@/types';
 
-const INITIAL_FILTERS: CatalogFilters = {
-  q: '',
-  category: '',
-  brand: '',
-  color: '',
-  size: '',
-  storeId: '',
-  minPrice: '',
-  maxPrice: '',
-  sort: 'newest',
+const EMPTY_FACETS: CatalogFacets = {
+  colors: [],
+  sizes: [],
+  brands: [],
+  subcategories: [],
+  priceRange: { min: null, max: null },
 };
 
-export default function CatalogPage() {
-  const [filters, setFilters] = useState<CatalogFilters>(INITIAL_FILTERS);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [stores, setStores] = useState<Store[]>([]);
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [compareIds, setCompareIds] = useState<string[]>([]);
-  const limit = 12;
+const PAGE_SIZE = 20;
 
-  async function loadCatalog(targetPage: number, currentFilters: CatalogFilters) {
-    setLoading(true);
-    try {
-      const data = await api.searchProducts({
-        ...currentFilters,
-        page: targetPage,
-        limit,
-      });
-      setProducts(data.items);
-      setTotal(data.total);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  }
+export default function CatalogPage() {
+  const { filters, setFilters, cmp, user, hydrated, handleError } = useApp();
+  const [stores, setStores] = useState<StoreRef[]>([]);
+  const [facets, setFacets] = useState<CatalogFacets>(EMPTY_FACETS);
+  const [products, setProducts] = useState<ProductSummary[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalItems, setTotalItems] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const filterKey = JSON.stringify(filters);
+  const prevFilterKeyRef = useRef(filterKey);
 
   useEffect(() => {
-    api.getStores().then(setStores).catch(() => {});
-    loadCatalog(1, INITIAL_FILTERS);
+    api
+      .getStores()
+      .then((res) => setStores(res.items))
+      .catch(() => setStores([]));
+    api
+      .getFacets()
+      .then(setFacets)
+      .catch(() => setFacets(EMPTY_FACETS));
   }, []);
 
-  function toggleCompare(id: string) {
-    setCompareIds((prev) => {
-      const next = prev.includes(id)
-        ? prev.filter((item) => item !== id)
-        : prev.length < 4
-        ? [...prev, id]
-        : prev;
-      localStorage.setItem('ob_compare_ids', JSON.stringify(next));
-      return next;
-    });
-  }
+  useEffect(() => {
+    if (!hydrated) return;
 
-  const totalPages = Math.max(1, Math.ceil(total / limit));
+    let targetPage = page;
+    if (prevFilterKeyRef.current !== filterKey) {
+      prevFilterKeyRef.current = filterKey;
+      if (page !== 1) {
+        setPage(1);
+        return;
+      }
+      targetPage = 1;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      setLoading(true);
+      const minNum =
+        filters.minPrice.trim() !== '' ? Number(filters.minPrice) : undefined;
+      const usePrefs = Boolean(user && filters.usePreferences);
+
+      api
+        .searchProducts({
+          q: filters.q || undefined,
+          category: filters.category || undefined,
+          sort: filters.sort || undefined,
+          brand: filters.brands.length ? filters.brands : undefined,
+          color: filters.colors.length ? filters.colors : undefined,
+          size: filters.sizes.length ? filters.sizes : undefined,
+          store: filters.includeStores.length
+            ? filters.includeStores
+            : undefined,
+          excludeStore: filters.excludeStores.length
+            ? filters.excludeStores
+            : undefined,
+          minPrice:
+            !usePrefs && minNum !== undefined && Number.isFinite(minNum)
+              ? minNum
+              : undefined,
+          maxPrice:
+            !usePrefs && filters.maxPrice !== null
+              ? filters.maxPrice
+              : undefined,
+          usePreferences: usePrefs || undefined,
+          page: targetPage,
+          pageSize: PAGE_SIZE,
+        })
+        .then((res) => {
+          if (cancelled) return;
+          setProducts(res.items);
+          setTotalItems(res.totalItems);
+          setTotalPages(Math.max(1, res.totalPages));
+        })
+        .catch((err) => {
+          if (!cancelled) handleError(err, 'No pudimos cargar el catálogo.');
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [filterKey, filters, handleError, hydrated, page, user]);
+
+  const cheapest = useMemo(() => cheapestIds(products), [products]);
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Catálogo</h1>
-          <p className="text-sm text-gray-600">
-            Explora prendas, filtra por precio en COP y compara opciones.
-          </p>
-        </div>
-
-        {compareIds.length > 0 && (
-          <Link
-            href={`/compare?ids=${compareIds.join(',')}`}
-            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-          >
-            Comparar ({compareIds.length})
+    <section className="ed-section">
+      <div className="row2" style={{ justifyContent: 'space-between', marginTop: 0 }}>
+        <h1 className="ed-h1" style={{ marginBottom: 0 }}>
+          Catálogo <span className="mut">· {totalItems} prendas</span>
+        </h1>
+        {cmp.length >= 2 && (
+          <Link href="/compare" className="btn pri">
+            Comparar ({cmp.length})
           </Link>
         )}
       </div>
 
-      <FilterBar
-        filters={filters}
-        stores={stores}
-        onChange={setFilters}
-        onSubmit={() => {
-          setPage(1);
-          loadCatalog(1, filters);
-        }}
-      />
+      <FilterBar stores={stores} facets={facets} />
 
       {loading ? (
-        <p className="text-sm text-gray-500">Cargando productos...</p>
+        <p className="mut">Cargando catálogo…</p>
       ) : products.length === 0 ? (
-        <div className="rounded-lg border bg-white p-8 text-center text-sm text-gray-500">
-          No se encontraron productos con los filtros actuales.
+        <div className="empty">
+          <b>Sin resultados.</b>
+          <br />
+          Prueba quitar filtros, subir el precio máximo o buscar otras palabras.
+          <div className="row2 center" style={{ marginTop: 12 }}>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => setFilters(DEFAULT_FILTERS)}
+            >
+              Limpiar filtros
+            </button>
+          </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="cards">
           {products.map((product) => (
             <ProductCard
               key={product.id}
               product={product}
-              isCompared={compareIds.includes(product.id)}
-              onToggleCompare={toggleCompare}
+              cheapest={cheapest.has(product.id)}
             />
           ))}
         </div>
       )}
 
-      <div className="flex items-center justify-between border-t pt-4 text-sm">
-        <span className="text-gray-600">
-          Página {page} de {totalPages} ({total} productos)
+      <div
+        className="row2"
+        style={{
+          justifyContent: 'space-between',
+          marginTop: 18,
+          paddingTop: 14,
+          borderTop: '1px solid var(--line)',
+        }}
+      >
+        <span className="small mut">
+          Página {page} de {totalPages} ({totalItems} prendas)
         </span>
-        <div className="flex gap-2">
+        <div className="row2" style={{ margin: 0 }}>
           <button
+            type="button"
+            className="btn"
             disabled={page <= 1}
-            onClick={() => {
-              const prev = page - 1;
-              setPage(prev);
-              loadCatalog(prev, filters);
-            }}
-            className="rounded border bg-white px-3 py-1.5 disabled:opacity-50"
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
           >
             Anterior
           </button>
           <button
+            type="button"
+            className="btn"
             disabled={page >= totalPages}
-            onClick={() => {
-              const next = page + 1;
-              setPage(next);
-              loadCatalog(next, filters);
-            }}
-            className="rounded border bg-white px-3 py-1.5 disabled:opacity-50"
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
           >
             Siguiente
           </button>
         </div>
       </div>
-    </div>
+    </section>
   );
 }
