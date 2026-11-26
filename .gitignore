@@ -28,3 +28,12 @@ npm-debug.log*
 Thumbs.db
 
 
+
+# LaTeX
+*.tex
+*.aux
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
