@@ -1,238 +1,724 @@
 openapi: 3.0.3
 info:
-  title: Outfit Builder MVP API
-  version: 0.1.0
-  description: API REST del MVP (Release 1) para Outfit Builder.
+  title: Outfit Builder API
+  version: 1.0.0
+  description: |
+    API REST del MVP (Release 1 - MUST) de **Outfit Builder**.
+
+    - Todas las respuestas son JSON UTF-8. Los montos están en pesos colombianos (COP).
+    - Los errores siempre tienen la forma `{ "error": "mensaje en español" }`
+      (más `field` cuando el error es de un campo concreto).
+    - Los endpoints protegidos usan `Authorization: Bearer <accessToken>` (JWT de 15 minutos).
+    - Los endpoints públicos tienen un límite de 60 peticiones por minuto por IP;
+      `/auth/login` además admite 10 intentos fallidos cada 15 minutos por IP.
 servers:
+  - url: /api
+    description: Mismo host que sirve la documentación
   - url: http://localhost:4000/api
+    description: Desarrollo local
+
+tags:
+  - name: Sistema
+  - name: Autenticación
+  - name: Preferencias
+  - name: Catálogo
+  - name: Outfits
+  - name: Admin - Tiendas
+
+paths:
+  /health:
+    get:
+      tags: [Sistema]
+      summary: Healthcheck del backend y de la base de datos
+      responses:
+        "200":
+          description: Backend y base de datos disponibles
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+              example: { status: ok, database: ok }
+        "503":
+          description: La base de datos no responde
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+              example: { status: error, database: unavailable }
+
+  # ------------------------------------------------------------------ Auth
+  /auth/register:
+    post:
+      tags: [Autenticación]
+      summary: Registro local de usuario (abre sesión)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterRequest" }
+            example: { email: laura@example.com, password: Secreta123, name: Laura, country: CO }
+      responses:
+        "201":
+          description: Usuario creado y sesión abierta
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthSession" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /auth/login:
+    post:
+      tags: [Autenticación]
+      summary: Inicio de sesión local
+      description: Con credenciales incorrectas responde siempre el mismo mensaje, sin revelar si el correo existe.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+            example: { email: laura@example.com, password: Secreta123 }
+      responses:
+        "200":
+          description: Sesión iniciada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthSession" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /auth/logout:
+    post:
+      tags: [Autenticación]
+      summary: Cerrar sesión (revoca el token actual)
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Sesión cerrada }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # ----------------------------------------------------------- Preferencias
+  /preferences:
+    get:
+      tags: [Preferencias]
+      summary: Resumen de preferencias (rango de precios y presupuesto)
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Preferencias del usuario (todo en null si aún no las configuró)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreferencesSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      tags: [Preferencias]
+      summary: Crear o actualizar preferencias
+      description: Solo se actualizan los campos enviados; `null` borra el valor.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdatePreferencesRequest" }
+            example: { minPrice: 50000, maxPrice: 300000, maxOutfitBudget: 600000 }
+      responses:
+        "200":
+          description: Preferencias actualizadas
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreferencesSummary" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # --------------------------------------------------------------- Catálogo
+  /products:
+    get:
+      tags: [Catálogo]
+      summary: Buscar productos (texto, filtros combinados, orden por precio y paginación)
+      description: |
+        Los filtros de lista aceptan valores separados por coma (`?color=negro,azul`) o repetidos
+        (`?color=negro&color=azul`). El token es opcional: si se envía y `usePreferences=true`,
+        se aplica el rango de precios guardado cuando no se envían `minPrice`/`maxPrice`.
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - { in: query, name: q, schema: { type: string }, description: Texto libre (nombre, marca o subcategoría) }
+        - { in: query, name: minPrice, schema: { type: integer, minimum: 0 }, description: Precio mínimo en COP }
+        - { in: query, name: maxPrice, schema: { type: integer, minimum: 0 }, description: Precio máximo en COP }
+        - { in: query, name: brand, schema: { type: string }, description: Marcas }
+        - { in: query, name: color, schema: { type: string }, description: Colores }
+        - { in: query, name: size, schema: { type: string }, description: Tallas disponibles }
+        - in: query
+          name: category
+          description: Categorías estándar
+          schema: { type: string, enum: [top, bottom, shoes] }
+        - { in: query, name: subcategory, schema: { type: string } }
+        - { in: query, name: store, schema: { type: string }, description: Ids de tiendas a incluir }
+        - { in: query, name: excludeStore, schema: { type: string }, description: Ids de tiendas a excluir }
+        - in: query
+          name: sort
+          schema: { type: string, enum: [price_asc, price_desc] }
+        - { in: query, name: page, schema: { type: integer, minimum: 1, default: 1 } }
+        - { in: query, name: pageSize, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { in: query, name: usePreferences, schema: { type: boolean, default: false } }
+      responses:
+        "200":
+          description: Página de resultados
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /products/compare:
+    get:
+      tags: [Catálogo]
+      summary: Comparar de 2 a 4 productos lado a lado
+      parameters:
+        - in: query
+          name: ids
+          required: true
+          description: Ids separados por coma
+          schema: { type: string }
+          example: 3f1c2a9e-0000-4000-8000-000000000001,3f1c2a9e-0000-4000-8000-000000000002
+      responses:
+        "200":
+          description: Productos en el mismo orden en que se pidieron
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductComparison" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /products/{id}:
+    get:
+      tags: [Catálogo]
+      summary: Detalle de producto (fotos, tallas y enlace a la tienda)
+      parameters:
+        - { $ref: "#/components/parameters/IdPath" }
+      responses:
+        "200":
+          description: Detalle del producto
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductDetail" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  # ---------------------------------------------------------------- Outfits
+  /outfits/draft:
+    post:
+      tags: [Outfits]
+      summary: Iniciar un outfit vacío (borrador, no se guarda)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+            example: { name: Outfit de oficina }
+      responses:
+        "200":
+          description: Borrador con las 3 secciones vacías
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Outfit" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /outfits/draft/pieces:
+    post:
+      tags: [Outfits]
+      summary: Asignar o reemplazar una prenda del borrador
+      description: |
+        El borrador vive en el cliente: se envía su estado actual y se recibe recalculado
+        (total en COP y aviso de presupuesto, que nunca bloquea).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AssignPieceRequest" }
+            example:
+              draft:
+                name: Outfit de oficina
+                pieces: { top: 3f1c2a9e-0000-4000-8000-000000000001, bottom: null, shoes: null }
+              slotType: shoes
+              productId: 3f1c2a9e-0000-4000-8000-000000000003
+      responses:
+        "200":
+          description: Borrador recalculado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Outfit" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /outfits:
+    get:
+      tags: [Outfits]
+      summary: Listar mis outfits (más reciente primero)
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Outfits guardados del usuario
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Outfit" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Outfits]
+      summary: Guardar un outfit con nombre
+      description: Pasarse del presupuesto no impide guardar.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SaveOutfitRequest" }
+            example:
+              name: Outfit de oficina
+              pieces:
+                top: 3f1c2a9e-0000-4000-8000-000000000001
+                bottom: 3f1c2a9e-0000-4000-8000-000000000002
+                shoes: 3f1c2a9e-0000-4000-8000-000000000003
+      responses:
+        "201":
+          description: Outfit guardado
+          headers:
+            Location: { schema: { type: string }, description: URL del outfit creado }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Outfit" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /outfits/{id}:
+    get:
+      tags: [Outfits]
+      summary: Ver un outfit guardado (tienda, precio COP y enlace de compra por prenda)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/IdPath" }
+      responses:
+        "200":
+          description: Detalle del outfit
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Outfit" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ------------------------------------------------------------------ Admin
+  /admin/stores:
+    get:
+      tags: [Admin - Tiendas]
+      summary: Listar todas las tiendas (activas e inactivas)
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Tiendas registradas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Store" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [Admin - Tiendas]
+      summary: Registrar una tienda
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateStoreRequest" }
+            example: { name: Tienda Bogotá, baseUrl: "https://tienda.example.co", isActive: true }
+      responses:
+        "201":
+          description: Tienda creada
+          headers:
+            Location: { schema: { type: string }, description: URL de la tienda creada }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Store" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /admin/stores/{id}:
+    put:
+      tags: [Admin - Tiendas]
+      summary: Editar nombre o URL de una tienda
+      description: Solo se cambian los campos enviados.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/IdPath" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateStoreRequest" }
+            example: { name: Tienda Bogotá Centro }
+      responses:
+        "200":
+          description: Tienda actualizada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Store" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/stores/{id}/status:
+    patch:
+      tags: [Admin - Tiendas]
+      summary: Activar o desactivar una tienda
+      description: Una tienda inactiva deja de aportar productos al catálogo. La operación es idempotente.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/IdPath" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [isActive]
+              properties:
+                isActive: { type: boolean }
+            example: { isActive: false }
+      responses:
+        "200":
+          description: Estado actualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Store" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/stores/{id}/scrape:
+    post:
+      tags: [Admin - Tiendas]
+      summary: Actualizar el catálogo de una tienda activa (scraping + estandarización)
+      description: |
+        Si el servicio de scraping falla, la respuesta sigue siendo `200` con `status: failed`
+        y un mensaje claro; el catálogo actual no se modifica.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/IdPath" }
+      responses:
+        "200":
+          description: Resultado de la extracción
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScrapingResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+
+  parameters:
+    IdPath:
+      in: path
+      name: id
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    BadRequest:
+      description: Datos inválidos
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: El precio mínimo no puede ser mayor que el precio máximo., field: minPrice }
+    Unauthorized:
+      description: Falta el token o la sesión no es válida
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: Tu sesión expiró o no es válida. Inicia sesión de nuevo. }
+    Forbidden:
+      description: El usuario no tiene permiso (requiere rol admin)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: Esta sección es solo para administradores. }
+    NotFound:
+      description: El recurso no existe
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: Este producto no existe o ya no está disponible. }
+    Conflict:
+      description: Conflicto con datos existentes
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: Ya existe una cuenta con este correo electrónico., field: email }
+    TooManyRequests:
+      description: Se superó el límite de peticiones
+      headers:
+        Retry-After: { schema: { type: integer }, description: Segundos hasta poder reintentar }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: Hiciste demasiadas peticiones. Espera un momento e inténtalo de nuevo. }
+
   schemas:
     Error:
       type: object
+      required: [error]
       properties:
-        error:
-          type: string
-    AuthResponse:
+        error: { type: string, description: Mensaje claro en español }
+        field: { type: string, description: Campo afectado, si aplica }
+
+    Health:
       type: object
       properties:
-        token:
+        status: { type: string, enum: [ok, error] }
+        database: { type: string, enum: [ok, unavailable] }
+
+    # ---- Auth
+    RegisterRequest:
+      type: object
+      required: [email, password, name]
+      properties:
+        email: { type: string, format: email }
+        password:
           type: string
-        user:
+          minLength: 8
+          maxLength: 72
+          description: Al menos una letra y un número
+        name: { type: string }
+        country: { type: string, nullable: true }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        name: { type: string }
+        country: { type: string, nullable: true }
+        role: { type: string, enum: [user, admin] }
+    AuthSession:
+      type: object
+      properties:
+        accessToken: { type: string }
+        tokenType: { type: string, enum: [Bearer] }
+        expiresInSeconds: { type: integer, example: 900 }
+        user: { $ref: "#/components/schemas/User" }
+
+    # ---- Preferencias
+    UpdatePreferencesRequest:
+      type: object
+      properties:
+        minPrice: { type: integer, minimum: 0, nullable: true }
+        maxPrice: { type: integer, minimum: 0, nullable: true }
+        maxOutfitBudget: { type: integer, minimum: 0, nullable: true }
+    PreferencesSummary:
+      type: object
+      properties:
+        userId: { type: string, format: uuid }
+        priceRange:
           type: object
           properties:
-            id:
-              type: string
-              format: uuid
-            email:
-              type: string
-            name:
-              type: string
-            role:
-              type: string
-    Preferences:
+            min: { type: integer, nullable: true }
+            max: { type: integer, nullable: true }
+        maxOutfitBudget: { type: integer, nullable: true }
+        hasPriceRange: { type: boolean }
+        hasBudget: { type: boolean }
+        currency: { type: string, enum: [COP] }
+
+    # ---- Catálogo
+    StoreRef:
       type: object
       properties:
-        min_price_cop:
-          type: integer
-          minimum: 0
-        max_price_cop:
-          type: integer
-          minimum: 0
-        budget_limit_cop:
-          type: integer
-          minimum: 0
-paths:
-  /health:
-    get:
-      summary: Healthcheck del backend
-      responses:
-        "200":
-          description: OK
-  /auth/register:
-    post:
-      summary: Registro local de usuario
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [email, password, name]
-              properties:
-                email: { type: string }
-                password: { type: string, minLength: 6 }
-                name: { type: string }
-      responses:
-        "201":
-          description: Usuario creado
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AuthResponse"
-  /auth/login:
-    post:
-      summary: Inicio de sesión local
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [email, password]
-              properties:
-                email: { type: string }
-                password: { type: string }
-      responses:
-        "200":
-          description: Sesión iniciada
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AuthResponse"
-  /preferences:
-    get:
-      summary: Obtener preferencias de presupuesto y rango de precio
-      security: [{ bearerAuth: [] }]
-      responses:
-        "200":
-          description: Preferencias del usuario
-    put:
-      summary: Actualizar preferencias de presupuesto y rango de precio
-      security: [{ bearerAuth: [] }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/Preferences"
-      responses:
-        "200":
-          description: Preferencias actualizadas
-  /products:
-    get:
-      summary: Buscar y filtrar productos con paginación y orden por precio
-      parameters:
-        - in: query
-          name: q
-          schema: { type: string }
-        - in: query
-          name: category
-          schema: { type: string, enum: [top, bottom, shoes] }
-        - in: query
-          name: brand
-          schema: { type: string }
-        - in: query
-          name: color
-          schema: { type: string }
-        - in: query
-          name: size
-          schema: { type: string }
-        - in: query
-          name: storeId
-          schema: { type: string, format: uuid }
-        - in: query
-          name: minPrice
-          schema: { type: integer }
-        - in: query
-          name: maxPrice
-          schema: { type: integer }
-        - in: query
-          name: sort
-          schema: { type: string, enum: [price_asc, price_desc, newest] }
-        - in: query
-          name: page
-          schema: { type: integer, default: 1 }
-        - in: query
-          name: limit
-          schema: { type: integer, default: 12 }
-      responses:
-        "200":
-          description: Lista paginada de productos
-  /products/compare:
-    get:
-      summary: Comparar productos lado a lado
-      parameters:
-        - in: query
-          name: ids
-          required: true
-          schema: { type: string }
-      responses:
-        "200":
-          description: Detalle de productos seleccionados
-  /products/{id}:
-    get:
-      summary: Detalle de producto con fotos, tallas y enlace externo
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema: { type: string, format: uuid }
-      responses:
-        "200":
-          description: Detalle del producto
-  /outfits:
-    get:
-      summary: Listar outfits guardados del usuario
-      security: [{ bearerAuth: [] }]
-      responses:
-        "200":
-          description: Outfits del usuario
-    post:
-      summary: Guardar un outfit (top, bottom, shoes) con cálculo total en COP
-      security: [{ bearerAuth: [] }]
-      responses:
-        "201":
-          description: Outfit guardado
-  /admin/stores:
-    get:
-      summary: Listar tiendas registradas
-      security: [{ bearerAuth: [] }]
-      responses:
-        "200":
-          description: Lista de tiendas
-    post:
-      summary: Crear tienda (Admin)
-      security: [{ bearerAuth: [] }]
-      responses:
-        "201":
-          description: Tienda creada
-  /admin/stores/{id}:
-    put:
-      summary: Actualizar tienda (Admin)
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema: { type: string, format: uuid }
-      responses:
-        "200":
-          description: Tienda actualizada
-    delete:
-      summary: Eliminar tienda (Admin)
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema: { type: string, format: uuid }
-      responses:
-        "204":
-          description: Tienda eliminada
-  /admin/stores/{id}/scrape:
-    post:
-      summary: Ejecutar scraping y estandarización de productos para una tienda (Admin)
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema: { type: string, format: uuid }
-      responses:
-        "200":
-          description: Resumen de productos importados
+        id: { type: string, format: uuid }
+        name: { type: string, nullable: true }
+    ProductSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        brand: { type: string, nullable: true }
+        category: { type: string, enum: [top, bottom, shoes] }
+        subcategory: { type: string, nullable: true }
+        color: { type: string, nullable: true }
+        priceCop: { type: integer, example: 129900 }
+        currency: { type: string, enum: [COP] }
+        isSecondHand: { type: boolean }
+        primaryImageUrl: { type: string, nullable: true }
+        availableSizes: { type: array, items: { type: string } }
+        externalUrl: { type: string }
+        store: { $ref: "#/components/schemas/StoreRef" }
+    ProductDetail:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        brand: { type: string, nullable: true }
+        category: { type: string, enum: [top, bottom, shoes] }
+        subcategory: { type: string, nullable: true }
+        material: { type: string, nullable: true }
+        color: { type: string, nullable: true }
+        priceCop: { type: integer }
+        currency: { type: string, enum: [COP] }
+        rating: { type: number, nullable: true, minimum: 0, maximum: 5 }
+        isSecondHand: { type: boolean }
+        images:
+          type: array
+          items:
+            type: object
+            properties:
+              url: { type: string }
+              isPrimary: { type: boolean }
+        sizes:
+          type: array
+          items:
+            type: object
+            properties:
+              size: { type: string }
+              isAvailable: { type: boolean }
+        externalUrl: { type: string }
+        lastPriceUpdate: { type: string, format: date-time, nullable: true }
+        store: { $ref: "#/components/schemas/StoreRef" }
+    ProductPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ProductSummary" }
+        page: { type: integer }
+        pageSize: { type: integer }
+        totalItems: { type: integer }
+        totalPages: { type: integer }
+    ProductComparison:
+      type: object
+      properties:
+        products:
+          type: array
+          items: { $ref: "#/components/schemas/ProductDetail" }
+
+    # ---- Outfits
+    OutfitPieces:
+      type: object
+      description: Id de producto por sección; ausente o null = sección vacía
+      properties:
+        top: { type: string, format: uuid, nullable: true }
+        bottom: { type: string, format: uuid, nullable: true }
+        shoes: { type: string, format: uuid, nullable: true }
+    AssignPieceRequest:
+      type: object
+      required: [slotType, productId]
+      properties:
+        draft:
+          type: object
+          properties:
+            name: { type: string }
+            pieces: { $ref: "#/components/schemas/OutfitPieces" }
+        slotType: { type: string, enum: [top, bottom, shoes] }
+        productId: { type: string, format: uuid }
+    SaveOutfitRequest:
+      type: object
+      required: [name, pieces]
+      properties:
+        name: { type: string }
+        pieces: { $ref: "#/components/schemas/OutfitPieces" }
+    OutfitPiece:
+      type: object
+      properties:
+        productId: { type: string, format: uuid }
+        name: { type: string }
+        brand: { type: string, nullable: true }
+        priceCop: { type: integer }
+        primaryImageUrl: { type: string, nullable: true }
+        externalUrl: { type: string, description: Enlace de compra en la tienda }
+        store: { $ref: "#/components/schemas/StoreRef" }
+    OutfitSlot:
+      type: object
+      properties:
+        slotType: { type: string, enum: [top, bottom, shoes] }
+        label: { type: string, example: parte superior }
+        piece:
+          allOf: [{ $ref: "#/components/schemas/OutfitPiece" }]
+          nullable: true
+    Outfit:
+      type: object
+      properties:
+        id: { type: string, format: uuid, nullable: true, description: null mientras es borrador }
+        isSaved: { type: boolean }
+        name: { type: string }
+        slots:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items: { $ref: "#/components/schemas/OutfitSlot" }
+        totalCostCop: { type: integer }
+        currency: { type: string, enum: [COP] }
+        budget:
+          type: object
+          description: Aviso de presupuesto (nunca bloquea)
+          properties:
+            maxBudget: { type: integer, nullable: true }
+            isOverBudget: { type: boolean }
+            differenceCop: { type: integer, nullable: true }
+        createdAt: { type: string, format: date-time, nullable: true }
+
+    # ---- Admin
+    Store:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        baseUrl: { type: string }
+        isActive: { type: boolean }
+        lastScrapedAt: { type: string, format: date-time, nullable: true }
+    CreateStoreRequest:
+      type: object
+      required: [name, baseUrl]
+      properties:
+        name: { type: string }
+        baseUrl: { type: string, format: uri }
+        isActive: { type: boolean, default: true }
+    UpdateStoreRequest:
+      type: object
+      properties:
+        name: { type: string }
+        baseUrl: { type: string, format: uri }
+    ScrapingResult:
+      type: object
+      properties:
+        storeId: { type: string, format: uuid }
+        status: { type: string, enum: [success, failed] }
+        receivedCount: { type: integer }
+        discardedCount: { type: integer }
+        insertedCount: { type: integer }
+        updatedCount: { type: integer }
+        finishedAt: { type: string, format: date-time }
+        message: { type: string, nullable: true }
